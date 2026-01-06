@@ -119,7 +119,7 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
 
         // Read touch state
         const touch = touchState.value;
-        const strength = touch.mode === 3 ? -20 : (touch.mode === 2 ? -5 : 5); // Mode 3: Explode, Mode 2: Repel, Mode 1: Attract
+        const strength = touch.mode === 3 ? -50 : (touch.mode === 2 ? -5 : 5); // Mode 3: Explode (-50), Mode 2: Repel (-5), Mode 1: Attract (5)
         const attractor = touch.active ? { x: touch.x, y: touch.y, strength } : undefined;
 
         // Run simulation

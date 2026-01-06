@@ -174,12 +174,30 @@ export class Flock {
                 }
             }
 
-            // Limit speed
+            // Limit speed (Max)
             const speedSq = boid.vx * boid.vx + boid.vy * boid.vy;
             if (speedSq > maxSpeedSq) {
                 const invSpeed = 1 / Math.sqrt(speedSq);
                 boid.vx = boid.vx * invSpeed * maxSpeed;
                 boid.vy = boid.vy * invSpeed * maxSpeed;
+            } else {
+                // Minimum Speed (Propulsion)
+                // If they slow down too much (due to drag), boost them back up.
+                // This ensures "scattered" boids keep moving directly forward.
+                const minSpeed = maxSpeed * 0.5; // Cruising speed
+                const minSpeedSq = minSpeed * minSpeed;
+                if (speedSq < minSpeedSq) {
+                    if (speedSq > 0.0001) {
+                        const invSpeed = 1 / Math.sqrt(speedSq);
+                        boid.vx = boid.vx * invSpeed * minSpeed;
+                        boid.vy = boid.vy * invSpeed * minSpeed;
+                    } else {
+                        // Dead stop? Kick them in a random direction
+                        const angle = Math.random() * Math.PI * 2;
+                        boid.vx = Math.cos(angle) * minSpeed;
+                        boid.vy = Math.sin(angle) * minSpeed;
+                    }
+                }
             }
 
             // Update Position

@@ -39,17 +39,30 @@ export const TouchHandler = ({ children, touchState, onDoubleTap, onSettings }: 
         });
 
     const longPress = Gesture.LongPress()
-        .minDuration(500)
+        .minDuration(400)
         .onStart((e) => {
             touchState.value = {
                 active: 1,
                 x: e.x,
                 y: e.y,
-                mode: 2, // Repel
+                mode: 1, // Attract (Charging)
             };
         })
-        .onFinalize(() => {
-            touchState.value = { ...touchState.value, active: 0, mode: 0 };
+        .onFinalize((e) => {
+            // Explode on release
+            touchState.value = {
+                active: 1,
+                x: e.x, // Use last known position
+                y: e.y,
+                mode: 3, // Explode
+            };
+
+            // Reset after short delay to stop explosion
+            runOnJS(() => {
+                setTimeout(() => {
+                    touchState.value = { ...touchState.value, active: 0, mode: 0 };
+                }, 200);
+            })();
         });
 
     // Double tap
