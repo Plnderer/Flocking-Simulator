@@ -15,6 +15,8 @@ export default function App() {
     const [settingsVisible, setSettingsVisible] = useState(false);
     const touchState = useSharedValue<TouchState>({ active: 0, x: 0, y: 0, mode: 0 });
     const showDebug = useSimulationStore(s => s.showDebug);
+    const isPlaying = useSimulationStore(s => s.isPlaying);
+    const togglePlay = useSimulationStore(s => s.togglePlay);
 
     // Web Skia Loading
     const [skiaReady, setSkiaReady] = useState(Platform.OS !== 'web');
@@ -66,12 +68,21 @@ export default function App() {
             {showDebug && <FPSCounter />}
 
             {!settingsVisible && (
-                <TouchableOpacity
-                    style={styles.settingsButton}
-                    onPress={() => setSettingsVisible(true)}
-                >
-                    <Text style={styles.gearIcon}>⚙️</Text>
-                </TouchableOpacity>
+                <>
+                    <TouchableOpacity
+                        style={styles.playButton}
+                        onPress={togglePlay}
+                    >
+                        <Text style={styles.gearIcon}>{isPlaying ? '⏸️' : '▶️'}</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={styles.settingsButton}
+                        onPress={() => setSettingsVisible(true)}
+                    >
+                        <Text style={styles.gearIcon}>⚙️</Text>
+                    </TouchableOpacity>
+                </>
             )}
 
             <SettingsSheet
@@ -101,6 +112,18 @@ const styles = StyleSheet.create({
     },
     gearIcon: {
         fontSize: 24,
+    },
+    playButton: {
+        position: 'absolute',
+        bottom: 30,
+        right: 80, // Left of settings
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 50,
     },
     center: {
         flex: 1,

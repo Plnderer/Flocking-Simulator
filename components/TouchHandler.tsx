@@ -34,7 +34,7 @@ export const TouchHandler = ({ children, touchState, onDoubleTap, onSettings }: 
                 y: e.y,
             };
         })
-        .onEnd(() => {
+        .onFinalize(() => {
             touchState.value = { ...touchState.value, active: 0, mode: 0 };
         });
 
@@ -48,7 +48,7 @@ export const TouchHandler = ({ children, touchState, onDoubleTap, onSettings }: 
                 mode: 2, // Repel
             };
         })
-        .onEnd(() => {
+        .onFinalize(() => {
             touchState.value = { ...touchState.value, active: 0, mode: 0 };
         });
 

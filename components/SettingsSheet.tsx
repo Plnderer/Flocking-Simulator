@@ -99,6 +99,29 @@ export const SettingsSheet = ({ visible, onClose }: SettingsSheetProps) => {
                     <Switch value={store.showDebug} onValueChange={store.toggleDebug} />
                 </View>
 
+                <View style={styles.section}>
+                    <Text style={[styles.label, { marginBottom: 10 }]}>Color Mode</Text>
+                    <View style={styles.segmentContainer}>
+                        {['solid', 'velocity', 'rainbow'].map((mode) => (
+                            <TouchableOpacity
+                                key={mode}
+                                style={[
+                                    styles.segmentBtn,
+                                    store.colorMode === mode && styles.segmentBtnActive
+                                ]}
+                                onPress={() => store.setColorMode(mode as any)}
+                            >
+                                <Text style={[
+                                    styles.segmentText,
+                                    store.colorMode === mode && styles.segmentTextActive
+                                ]}>
+                                    {mode.charAt(0).toUpperCase() + mode.slice(1)}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                </View>
+
                 <TouchableOpacity style={styles.resetBtn} onPress={store.resetDefaults}>
                     <Text style={styles.resetText}>Reset Defaults</Text>
                 </TouchableOpacity>
@@ -176,5 +199,31 @@ const styles = StyleSheet.create({
     resetText: {
         color: '#ff6b6b',
         fontWeight: 'bold',
+    },
+    section: {
+        marginBottom: 20,
+    },
+    segmentContainer: {
+        flexDirection: 'row',
+        backgroundColor: '#333',
+        borderRadius: 8,
+        padding: 4,
+    },
+    segmentBtn: {
+        flex: 1,
+        paddingVertical: 8,
+        alignItems: 'center',
+        borderRadius: 6,
+    },
+    segmentBtnActive: {
+        backgroundColor: '#555',
+    },
+    segmentText: {
+        color: '#888',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    segmentTextActive: {
+        color: '#fff',
     }
 });

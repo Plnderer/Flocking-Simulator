@@ -7,6 +7,34 @@ import { Flock } from '../lib/simulation/Flock';
 import { useSimulationStore } from '../lib/store/simulationStore';
 import { TouchState } from './TouchHandler';
 
+const VELOCITY_PALETTE = (() => {
+    const palette = new Array<string>(256);
+    for (let i = 0; i < 256; i++) {
+        const r = i;
+        const b = 255 - i;
+        palette[i] = `rgb(${r}, 0, ${b})`;
+    }
+    return palette;
+})();
+
+const RAINBOW_PALETTE = (() => {
+    const palette = new Array<string>(360);
+    for (let i = 0; i < 360; i++) {
+        palette[i] = `hsl(${i}, 100%, 50%)`;
+    }
+    return palette;
+})();
+
+const COLOR_UPDATE_INTERVAL_MS = 100;
+const getColorStride = (boidCount: number) => {
+    if (boidCount > 2400) return 6;
+    if (boidCount > 1600) return 5;
+    if (boidCount > 1200) return 4;
+    if (boidCount > 800) return 3;
+    if (boidCount > 500) return 2;
+    return 1;
+};
+
 interface SimulationCanvasProps {
     touchState: SharedValue<TouchState>;
 }
@@ -25,12 +53,21 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
     const cohesionWeight = useSimulationStore(s => s.cohesionWeight);
     const isPlaying = useSimulationStore(s => s.isPlaying);
     const theme = useSimulationStore(s => s.theme);
+    const colorMode = useSimulationStore(s => s.colorMode);
+
+    const verticesBuffers = useRef<{ x: number, y: number }[][]>([]);
+    const colorsBuffers = useRef<string[][]>([]);
+    const vertexBufferIndex = useRef(0);
+    const colorBufferIndex = useRef(0);
+    const lastColorUpdate = useRef(0);
+    const lastColorMode = useRef<'solid' | 'velocity' | 'rainbow'>('solid');
+    const colorPhase = useRef(0);
 
     // Shared Values for rendering
     // Vertices expects SkPoint[] ({x,y})
-    // We use "any" to bypass strict typing if needed explicitly, but best to match {x,y}
     const vertices = useSharedValue<{ x: number, y: number }[]>([]);
-    const colors = useSharedValue(new Float32Array(0));
+    const vertexColors = useSharedValue<string[]>([]);
+
 
     // Initialize/Resize Flock
     useEffect(() => {
@@ -40,22 +77,26 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
     // Update Boid Count
     useEffect(() => {
         flock.setBoidCount(boidCount);
-        // Initial resize if needed
         const numVertices = boidCount * 3;
-        // vertices.value = new Array(numVertices).fill({x:0, y:0}); // Init
+        const newVerticesA = new Array<{ x: number, y: number }>(numVertices);
+        const newVerticesB = new Array<{ x: number, y: number }>(numVertices);
+        const newColorsA = new Array<string>(numVertices).fill('#000000');
+        const newColorsB = new Array<string>(numVertices).fill('#000000');
 
-        // Pre-calculate colors if static
-        const colorArray = new Float32Array(numVertices * 4); // r,g,b,a per vertex
-        // Actually Skia Vertices colors prop: Color[] | Float32Array?
-        // If Float32Array, it's usually unnormalized 4 floats per color?
-        // Easier to use Color array ["#fff", ...] string array? No, too slow.
-        // Int32Array of colors?
-        // Let's rely on standard color prop if possible or single paint color for all boids for now (optimization).
-        // Prompt says "Color Mode: Solid / Velocity / Rainbow".
-        // For "Solid", we can just set paint on Vertices.
-        // For "Rainbow", we need per-vertex colors.
+        for (let i = 0; i < numVertices; i++) {
+            newVerticesA[i] = { x: 0, y: 0 };
+            newVerticesB[i] = { x: 0, y: 0 };
+        }
 
-        // Let's allow dynamic colors later. For now, solid.
+        verticesBuffers.current = [newVerticesA, newVerticesB];
+        colorsBuffers.current = [newColorsA, newColorsB];
+        vertexBufferIndex.current = 0;
+        colorBufferIndex.current = 0;
+        lastColorUpdate.current = 0;
+        lastColorMode.current = 'solid';
+        colorPhase.current = 0;
+        vertices.value = newVerticesA;
+        vertexColors.value = newColorsA;
     }, [boidCount]);
 
 
@@ -67,7 +108,6 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
         const touch = touchState.value;
         const strength = touch.mode === 3 ? -20 : (touch.mode === 2 ? -5 : 5); // Mode 3: Explode, Mode 2: Repel, Mode 1: Attract
         const attractor = touch.active ? { x: touch.x, y: touch.y, strength } : undefined;
-        // mode 1 = attract, mode 2 = repel (negative strength), mode 3 = explode (handled elsewhere usually or high neg strength)
 
         // Run simulation
         flock.update(1.0, {
@@ -82,35 +122,108 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
 
         // Update Vertices
         const numBoids = flock.boids.length;
-        const newVertices: { x: number, y: number }[] = [];
+        const numVertices = numBoids * 3;
         const size = 6;
+        const halfSize = size * 0.5;
+        const useColor = colorMode !== 'solid';
+        const useVelocityColor = colorMode === 'velocity';
+        const invMaxSpeed = maxSpeed > 0 ? 1 / maxSpeed : 0;
+        const colorStride = useColor ? getColorStride(numBoids) : 1;
+
+        const buffers = verticesBuffers.current;
+        const colorBuffers = colorsBuffers.current;
+        if (buffers.length < 2 || colorBuffers.length < 2) {
+            return;
+        }
+
+        const nextVertexIndex = vertexBufferIndex.current ^ 1;
+        const verts = buffers[nextVertexIndex];
+        if (verts.length !== numVertices) {
+            return;
+        }
+
+        const shouldUpdateColors = useColor && (
+            lastColorMode.current !== colorMode ||
+            frameInfo.timestamp - lastColorUpdate.current >= COLOR_UPDATE_INTERVAL_MS
+        );
+        const timeHue = shouldUpdateColors && !useVelocityColor
+            ? Math.floor(frameInfo.timestamp / 20) % 360
+            : 0;
+
+        const nextColorIndex = shouldUpdateColors ? (colorBufferIndex.current ^ 1) : colorBufferIndex.current;
+        const colors = colorBuffers[nextColorIndex];
+        if (colors.length !== numVertices) {
+            return;
+        }
+        const colorsAlt = colorBuffers[nextColorIndex ^ 1];
 
         for (let i = 0; i < numBoids; i++) {
             const b = flock.boids[i];
-            const angle = Math.atan2(b.vy, b.vx);
-            const cos = Math.cos(angle);
-            const sin = Math.sin(angle);
+            const vx = b.vx;
+            const vy = b.vy;
+            const speedSq = vx * vx + vy * vy;
 
-            // Tip
-            newVertices.push({
-                x: (size * cos) - (0 * sin) + b.x,
-                y: (size * sin) + (0 * cos) + b.y
-            });
+            let dx = 1;
+            let dy = 0;
+            let speed = 0;
 
-            // Back Left
-            newVertices.push({
-                x: (-size * cos) - (-size / 2 * sin) + b.x,
-                y: (-size * sin) + (-size / 2 * cos) + b.y
-            });
+            if (speedSq > 0) {
+                speed = Math.sqrt(speedSq);
+                const invSpeed = 1 / speed;
+                dx = vx * invSpeed;
+                dy = vy * invSpeed;
+            }
 
-            // Back Right
-            newVertices.push({
-                x: (-size * cos) - (size / 2 * sin) + b.x,
-                y: (-size * sin) + (size / 2 * cos) + b.y
-            });
+            const px = -dy;
+            const py = dx;
+            const baseX = b.x - (dx * size);
+            const baseY = b.y - (dy * size);
+
+            const idx = i * 3;
+            const v0 = verts[idx] || (verts[idx] = { x: 0, y: 0 });
+            const v1 = verts[idx + 1] || (verts[idx + 1] = { x: 0, y: 0 });
+            const v2 = verts[idx + 2] || (verts[idx + 2] = { x: 0, y: 0 });
+
+            v0.x = b.x + (dx * size);
+            v0.y = b.y + (dy * size);
+            v1.x = baseX + (px * halfSize);
+            v1.y = baseY + (py * halfSize);
+            v2.x = baseX - (px * halfSize);
+            v2.y = baseY - (py * halfSize);
+
+            if (shouldUpdateColors && (i + colorPhase.current) % colorStride === 0) {
+                let color = '#00ffff';
+
+                if (useVelocityColor) {
+                    // Heatmap: Blue (slow) -> Red (fast)
+                    let paletteIndex = (speed * invMaxSpeed * 255) | 0;
+                    if (paletteIndex < 0) paletteIndex = 0;
+                    if (paletteIndex > 255) paletteIndex = 255;
+                    color = VELOCITY_PALETTE[paletteIndex];
+                } else {
+                    // Rainbow based on ID + Time
+                    const hueIndex = (timeHue + (b.id * 5)) % 360; // Lower id spread for more cohesion in loops
+                    color = RAINBOW_PALETTE[hueIndex];
+                }
+
+                colors[idx] = color;
+                colors[idx + 1] = color;
+                colors[idx + 2] = color;
+                colorsAlt[idx] = color;
+                colorsAlt[idx + 1] = color;
+                colorsAlt[idx + 2] = color;
+            }
         }
 
-        vertices.value = newVertices;
+        vertices.value = verts;
+        vertexBufferIndex.current = nextVertexIndex;
+        if (shouldUpdateColors) {
+            vertexColors.value = colors;
+            colorBufferIndex.current = nextColorIndex;
+            lastColorUpdate.current = frameInfo.timestamp;
+            colorPhase.current = (colorPhase.current + 1) % colorStride;
+        }
+        lastColorMode.current = colorMode;
     });
 
     const paintColor = theme === 'dark' ? "cyan" : "blue";
@@ -119,10 +232,10 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
     return (
         <Canvas style={{ flex: 1 }}>
             <Fill color={bg} />
-            {/* We use Vertices 'triangles' mode. indices? if not provided, it assumes non-indexed triangles (0,1,2), (3,4,5)... which is what we generated */}
             <Vertices
                 vertices={vertices}
-                color={paintColor}
+                colors={colorMode !== 'solid' ? vertexColors : undefined}
+                color={colorMode === 'solid' ? paintColor : undefined}
             />
         </Canvas>
     );

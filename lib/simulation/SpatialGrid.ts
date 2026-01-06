@@ -1,59 +1,109 @@
 import { Boid } from './Boid';
 
+export type NeighborAccumulation = {
+    count: number;
+    sepX: number;
+    sepY: number;
+    alignX: number;
+    alignY: number;
+    cohX: number;
+    cohY: number;
+};
+
 export class SpatialGrid {
     private cellSize: number;
     private width: number;
     private height: number;
-    private grid: Map<string, Boid[]>;
+    private cols: number;
+    private rows: number;
+    private cells: Boid[][];
 
     constructor(width: number, height: number, cellSize: number) {
         this.width = width;
         this.height = height;
         this.cellSize = cellSize;
-        this.grid = new Map();
+        this.cols = Math.max(1, Math.ceil(width / cellSize));
+        this.rows = Math.max(1, Math.ceil(height / cellSize));
+        this.cells = new Array(this.cols * this.rows);
+        for (let i = 0; i < this.cells.length; i++) {
+            this.cells[i] = [];
+        }
+    }
+
+    getCellSize(): number {
+        return this.cellSize;
     }
 
     clear() {
-        this.grid.clear();
+        for (const cell of this.cells) {
+            cell.length = 0;
+        }
     }
 
-    private getKey(x: number, y: number): string {
-        const col = Math.floor(x / this.cellSize);
-        const row = Math.floor(y / this.cellSize);
-        return `${col},${row}`;
+    private getCol(x: number): number {
+        let col = Math.floor(x / this.cellSize);
+        if (col < 0) return 0;
+        if (col >= this.cols) return this.cols - 1;
+        return col;
+    }
+
+    private getRow(y: number): number {
+        let row = Math.floor(y / this.cellSize);
+        if (row < 0) return 0;
+        if (row >= this.rows) return this.rows - 1;
+        return row;
+    }
+
+    private getIndex(col: number, row: number): number {
+        return row * this.cols + col;
     }
 
     add(boid: Boid) {
-        const key = this.getKey(boid.x, boid.y);
-        if (!this.grid.has(key)) {
-            this.grid.set(key, []);
-        }
-        this.grid.get(key)!.push(boid);
+        const col = this.getCol(boid.x);
+        const row = this.getRow(boid.y);
+        this.cells[this.getIndex(col, row)].push(boid);
     }
 
-    query(boid: Boid, radius: number): Boid[] {
-        const neighbors: Boid[] = [];
-        const col = Math.floor(boid.x / this.cellSize);
-        const row = Math.floor(boid.y / this.cellSize);
+    accumulate(boid: Boid, radiusSq: number, out: NeighborAccumulation): NeighborAccumulation {
+        out.count = 0;
+        out.sepX = 0;
+        out.sepY = 0;
+        out.alignX = 0;
+        out.alignY = 0;
+        out.cohX = 0;
+        out.cohY = 0;
+
+        const col = this.getCol(boid.x);
+        const row = this.getRow(boid.y);
 
         // Check 3x3 surrounding cells
         for (let i = -1; i <= 1; i++) {
+            const ncol = col + i;
+            if (ncol < 0 || ncol >= this.cols) continue;
             for (let j = -1; j <= 1; j++) {
-                const key = `${col + i},${row + j}`;
-                const cellBoids = this.grid.get(key);
-                if (cellBoids) {
-                    for (const other of cellBoids) {
-                        if (other.id !== boid.id) {
-                            const dx = other.x - boid.x;
-                            const dy = other.y - boid.y;
-                            if (dx * dx + dy * dy < radius * radius) {
-                                neighbors.push(other);
-                            }
+                const nrow = row + j;
+                if (nrow < 0 || nrow >= this.rows) continue;
+                const cellBoids = this.cells[this.getIndex(ncol, nrow)];
+                for (const other of cellBoids) {
+                    if (other.id !== boid.id) {
+                        const dx = boid.x - other.x;
+                        const dy = boid.y - other.y;
+                        const distSq = dx * dx + dy * dy;
+                        if (distSq > 0 && distSq < radiusSq) {
+                            out.count++;
+                            const invDistSq = 1 / distSq;
+                            out.sepX += dx * invDistSq;
+                            out.sepY += dy * invDistSq;
+                            out.alignX += other.vx;
+                            out.alignY += other.vy;
+                            out.cohX += other.x;
+                            out.cohY += other.y;
                         }
                     }
                 }
             }
         }
-        return neighbors;
+
+        return out;
     }
 }

@@ -6,7 +6,7 @@ const diff = new Vector2D();
 const sum = new Vector2D();
 
 export const FlockingRules = {
-    separation: (boid: Boid, neighbors: Boid[], perception: number, maxForce: number, maxSpeed: number): Vector2D => {
+    separation: (boid: Boid, neighbors: Boid[], perception: number, maxForce: number, maxSpeed: number, out?: Vector2D): Vector2D => {
         steer.set(0, 0);
         let count = 0;
 
@@ -29,23 +29,19 @@ export const FlockingRules = {
             if (steer.magSq() > 0) {
                 steer.normalize();
                 steer.mult(maxSpeed);
-                const currentVel = new Vector2D(boid.vx, boid.vy);
-                steer.sub(currentVel);
+                // Optimized to reuse internal vector for math
+                steer.sub(diff.set(boid.vx, boid.vy)); // reuse diff for current velocity
                 steer.limit(maxForce);
-                return steer; // Returns a mutable reference but caller usually copies or uses immediately.
-                // Warning: 'steer' is global reused. Caller must use result immediately!
-                // To be safe, return a copy or values. For performance, we might return values. 
-                // Let's return a new Vector2D strictly to avoid side effects if caller stores it, 
-                // OR caller must be aware. 
-                // Given "Render 500-2000 boids at 60fps", let's return a new Vector2D or reuse a pool.
-                // For now, return a new Vector2D to be safe.
+
+                if (out) return out.set(steer.x, steer.y);
                 return steer.copy();
             }
         }
+        if (out) return out.set(0, 0);
         return new Vector2D(0, 0);
     },
 
-    alignment: (boid: Boid, neighbors: Boid[], maxForce: number, maxSpeed: number): Vector2D => {
+    alignment: (boid: Boid, neighbors: Boid[], maxForce: number, maxSpeed: number, out?: Vector2D): Vector2D => {
         sum.set(0, 0);
         let count = 0;
         for (const other of neighbors) {
@@ -58,15 +54,17 @@ export const FlockingRules = {
             sum.div(count);
             sum.normalize();
             sum.mult(maxSpeed);
-            const currentVel = new Vector2D(boid.vx, boid.vy);
-            sum.sub(currentVel);
+            // reuse diff for current velocity
+            sum.sub(diff.set(boid.vx, boid.vy));
             sum.limit(maxForce);
+            if (out) return out.set(sum.x, sum.y);
             return sum.copy();
         }
+        if (out) return out.set(0, 0);
         return new Vector2D(0, 0);
     },
 
-    cohesion: (boid: Boid, neighbors: Boid[], maxForce: number, maxSpeed: number): Vector2D => {
+    cohesion: (boid: Boid, neighbors: Boid[], maxForce: number, maxSpeed: number, out?: Vector2D): Vector2D => {
         sum.set(0, 0);
         let count = 0;
         for (const other of neighbors) {
@@ -85,11 +83,13 @@ export const FlockingRules = {
             target.normalize();
             target.mult(maxSpeed);
 
-            const currentVel = new Vector2D(boid.vx, boid.vy);
-            target.sub(currentVel);
+            // reuse diff for current velocity
+            target.sub(diff.set(boid.vx, boid.vy));
             target.limit(maxForce);
+            if (out) return out.set(target.x, target.y);
             return target.copy();
         }
+        if (out) return out.set(0, 0);
         return new Vector2D(0, 0);
     }
 };

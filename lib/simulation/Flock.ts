@@ -1,7 +1,6 @@
 import { DEFAULTS } from '../../constants/defaults';
 import { Boid } from './Boid';
-import { FlockingRules } from './FlockingRules';
-import { SpatialGrid } from './SpatialGrid';
+import { SpatialGrid, type NeighborAccumulation } from './SpatialGrid';
 import { Vector2D } from './Vector2D';
 
 export class Flock {
@@ -9,6 +8,21 @@ export class Flock {
     grid: SpatialGrid;
     width: number = 0;
     height: number = 0;
+
+    // Reuse vectors to avoid allocation
+    private _sep = new Vector2D();
+    private _ali = new Vector2D();
+    private _coh = new Vector2D();
+    private _attr = new Vector2D();
+    private _accum: NeighborAccumulation = {
+        count: 0,
+        sepX: 0,
+        sepY: 0,
+        alignX: 0,
+        alignY: 0,
+        cohX: 0,
+        cohY: 0,
+    };
 
     constructor(count: number = DEFAULTS.BOID_COUNT) {
         // Initial dummy size, will be resized on first update
@@ -55,43 +69,84 @@ export class Flock {
         }
     ) {
         // 1. Rebuild Grid
-        this.grid = new SpatialGrid(this.width, this.height, params.perceptionRadius); // Optim: Reuse grid or clear?
-        // Clearing is better than new allocation if structure allows
-        // My SpatialGrid.clear() is available.
-        // However, if cell size changes, we need new grid.
-        // Let's assume cell size changes rarely.
-        // Actually, creating new Map is fast enough for <2000 items usually, but clearing is better.
-        // But currently I don't check if perceptionRadius changed.
-        // Just simple: clear and re-add.
-        this.grid.clear();
+        if (this.grid.getCellSize() !== params.perceptionRadius) {
+            this.grid = new SpatialGrid(this.width, this.height, params.perceptionRadius);
+        } else {
+            this.grid.clear();
+        }
+
         for (const boid of this.boids) {
             this.grid.add(boid);
         }
 
         const { perceptionRadius, maxSpeed, maxForce, separationWeight, alignmentWeight, cohesionWeight, attractor } = params;
+        const perceptionRadiusSq = perceptionRadius * perceptionRadius;
+        const maxSpeedSq = maxSpeed * maxSpeed;
 
         // 2. Update Boids
         for (const boid of this.boids) {
-            const neighbors = this.grid.query(boid, perceptionRadius);
+            const accum = this.grid.accumulate(boid, perceptionRadiusSq, this._accum);
 
-            const sep = FlockingRules.separation(boid, neighbors, perceptionRadius, maxForce, maxSpeed);
-            const ali = FlockingRules.alignment(boid, neighbors, maxForce, maxSpeed);
-            const coh = FlockingRules.cohesion(boid, neighbors, maxForce, maxSpeed);
+            if (accum.count > 0) {
+                const invCount = 1 / accum.count;
 
-            sep.mult(separationWeight);
-            ali.mult(alignmentWeight);
-            coh.mult(cohesionWeight);
+                const sep = this._sep.set(accum.sepX * invCount, accum.sepY * invCount);
+                if (sep.magSq() > 0) {
+                    sep.normalize();
+                    sep.mult(maxSpeed);
+                    sep.x -= boid.vx;
+                    sep.y -= boid.vy;
+                    sep.limit(maxForce);
+                } else {
+                    sep.set(0, 0);
+                }
+
+                const ali = this._ali.set(accum.alignX * invCount, accum.alignY * invCount);
+                if (ali.magSq() > 0) {
+                    ali.normalize();
+                    ali.mult(maxSpeed);
+                    ali.x -= boid.vx;
+                    ali.y -= boid.vy;
+                    ali.limit(maxForce);
+                } else {
+                    ali.set(0, 0);
+                }
+
+                const coh = this._coh.set(
+                    (accum.cohX * invCount) - boid.x,
+                    (accum.cohY * invCount) - boid.y
+                );
+                if (coh.magSq() > 0) {
+                    coh.normalize();
+                    coh.mult(maxSpeed);
+                    coh.x -= boid.vx;
+                    coh.y -= boid.vy;
+                    coh.limit(maxForce);
+                } else {
+                    coh.set(0, 0);
+                }
+            } else {
+                this._sep.set(0, 0);
+                this._ali.set(0, 0);
+                this._coh.set(0, 0);
+            }
+
+            this._sep.mult(separationWeight);
+            this._ali.mult(alignmentWeight);
+            this._coh.mult(cohesionWeight);
 
             // Apply forces
-            boid.vx += sep.x + ali.x + coh.x;
-            boid.vy += sep.y + ali.y + coh.y;
+            boid.vx += this._sep.x + this._ali.x + this._coh.x;
+            boid.vy += this._sep.y + this._ali.y + this._coh.y;
 
             // Attractor (Touch)
             if (attractor) {
-                const attrForce = new Vector2D(attractor.x - boid.x, attractor.y - boid.y);
-                const dist = attrForce.mag();
-                if (dist > 0 && dist < 300) { // Limit attraction range
-                    attrForce.normalize();
+                const attrForce = this._attr.set(attractor.x - boid.x, attractor.y - boid.y);
+                const distSq = attrForce.magSq();
+                if (distSq > 0 && distSq < 300 * 300) { // Limit attraction range
+                    const invDist = 1 / Math.sqrt(distSq);
+                    attrForce.x *= invDist;
+                    attrForce.y *= invDist;
                     attrForce.mult(maxForce * attractor.strength); // Stronger than normal forces
                     boid.vx += attrForce.x;
                     boid.vy += attrForce.y;
@@ -100,10 +155,10 @@ export class Flock {
 
             // Limit speed
             const speedSq = boid.vx * boid.vx + boid.vy * boid.vy;
-            if (speedSq > maxSpeed * maxSpeed) {
-                const speed = Math.sqrt(speedSq);
-                boid.vx = (boid.vx / speed) * maxSpeed;
-                boid.vy = (boid.vy / speed) * maxSpeed;
+            if (speedSq > maxSpeedSq) {
+                const invSpeed = 1 / Math.sqrt(speedSq);
+                boid.vx = boid.vx * invSpeed * maxSpeed;
+                boid.vy = boid.vy * invSpeed * maxSpeed;
             }
 
             // Update Position
