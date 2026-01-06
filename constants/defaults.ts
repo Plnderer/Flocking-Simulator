@@ -8,6 +8,9 @@ export const DEFAULTS = {
     COHESION_WEIGHT: 1.0,
     TRAIL_LENGTH: 0,
     FRAME_RATE: 60,
+    DRAG: 0.05,
+    NOISE: 0.1,
+    ALIGNMENT_BIAS: 1.0, // 1.0 = standard boids
 };
 
 export const CONSTRAINTS = {
@@ -17,4 +20,10 @@ export const CONSTRAINTS = {
     MAX_PERCEPTION: 200,
     MIN_SPEED: 1,
     MAX_SPEED: 15,
+    MIN_DRAG: 0,
+    MAX_DRAG: 0.1,
+    MIN_NOISE: 0,
+    MAX_NOISE: 0.5, // Radians
+    MIN_BIAS: 0,
+    MAX_BIAS: 4,
 };

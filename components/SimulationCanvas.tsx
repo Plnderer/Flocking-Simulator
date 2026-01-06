@@ -1,6 +1,6 @@
 import { Canvas, Fill, Vertices } from '@shopify/react-native-skia';
 import React, { useEffect, useRef } from 'react';
-import { useWindowDimensions } from 'react-native';
+import { AppState, useWindowDimensions } from 'react-native';
 import { SharedValue, useFrameCallback, useSharedValue } from 'react-native-reanimated';
 import { DEFAULTS } from '../constants/defaults';
 import { Flock } from '../lib/simulation/Flock';
@@ -54,6 +54,9 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
     const isPlaying = useSimulationStore(s => s.isPlaying);
     const theme = useSimulationStore(s => s.theme);
     const colorMode = useSimulationStore(s => s.colorMode);
+    const drag = useSimulationStore(s => s.drag);
+    const noise = useSimulationStore(s => s.noise);
+    const alignmentBias = useSimulationStore(s => s.alignmentBias);
 
     const verticesBuffers = useRef<{ x: number, y: number }[][]>([]);
     const colorsBuffers = useRef<string[][]>([]);
@@ -67,6 +70,7 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
     // Vertices expects SkPoint[] ({x,y})
     const vertices = useSharedValue<{ x: number, y: number }[]>([]);
     const vertexColors = useSharedValue<string[]>([]);
+    const isAppActive = useSharedValue(1); // 1 = active, 0 = background
 
 
     // Initialize/Resize Flock
@@ -97,12 +101,21 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
         colorPhase.current = 0;
         vertices.value = newVerticesA;
         vertexColors.value = newColorsA;
+        vertexColors.value = newColorsA;
     }, [boidCount]);
+
+    // Monitor AppState (Tab visibility/Background)
+    useEffect(() => {
+        const subscription = AppState.addEventListener('change', (nextAppState) => {
+            isAppActive.value = nextAppState === 'active' ? 1 : 0;
+        });
+        return () => subscription.remove();
+    }, []);
 
 
     // Frame Loop
     useFrameCallback((frameInfo) => {
-        if (!isPlaying) return;
+        if (!isPlaying || !isAppActive.value) return;
 
         // Read touch state
         const touch = touchState.value;
@@ -117,6 +130,9 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
             separationWeight,
             alignmentWeight,
             cohesionWeight,
+            drag,
+            noise,
+            alignmentBias,
             attractor
         });
 

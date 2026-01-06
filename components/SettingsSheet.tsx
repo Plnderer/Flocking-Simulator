@@ -88,6 +88,30 @@ export const SettingsSheet = ({ visible, onClose }: SettingsSheetProps) => {
                     min={0} max={5}
                     onValueChange={store.setCohesionWeight}
                 />
+                <ControlRow
+                    label="Drag (Friction)"
+                    value={store.drag}
+                    min={CONSTRAINTS.MIN_DRAG}
+                    max={CONSTRAINTS.MAX_DRAG}
+                    step={0.001}
+                    onValueChange={store.setDrag}
+                />
+                <ControlRow
+                    label="Noise (Jitter)"
+                    value={store.noise}
+                    min={CONSTRAINTS.MIN_NOISE}
+                    max={CONSTRAINTS.MAX_NOISE}
+                    step={0.01}
+                    onValueChange={store.setNoise}
+                />
+                <ControlRow
+                    label="Alignment Bias"
+                    value={store.alignmentBias}
+                    min={CONSTRAINTS.MIN_BIAS}
+                    max={CONSTRAINTS.MAX_BIAS}
+                    step={0.1}
+                    onValueChange={store.setAlignmentBias}
+                />
 
                 <View style={styles.switchRow}>
                     <Text style={styles.label}>Dark Mode</Text>

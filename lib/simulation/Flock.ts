@@ -65,6 +65,9 @@ export class Flock {
             separationWeight: number;
             alignmentWeight: number;
             cohesionWeight: number;
+            drag: number;
+            noise: number;
+            alignmentBias: number;
             attractor?: { x: number, y: number, strength: number }; // For touch interaction
         }
     ) {
@@ -79,13 +82,14 @@ export class Flock {
             this.grid.add(boid);
         }
 
-        const { perceptionRadius, maxSpeed, maxForce, separationWeight, alignmentWeight, cohesionWeight, attractor } = params;
+        const { perceptionRadius, maxSpeed, maxForce, separationWeight, alignmentWeight, cohesionWeight, drag, noise, alignmentBias, attractor } = params;
         const perceptionRadiusSq = perceptionRadius * perceptionRadius;
         const maxSpeedSq = maxSpeed * maxSpeed;
 
         // 2. Update Boids
         for (const boid of this.boids) {
-            const accum = this.grid.accumulate(boid, perceptionRadiusSq, this._accum);
+            // Pass alignmentBias to accumulator for weighted alignment
+            const accum = this.grid.accumulate(boid, perceptionRadiusSq, alignmentBias, this._accum);
 
             if (accum.count > 0) {
                 const invCount = 1 / accum.count;
@@ -139,6 +143,23 @@ export class Flock {
             boid.vx += this._sep.x + this._ali.x + this._coh.x;
             boid.vy += this._sep.y + this._ali.y + this._coh.y;
 
+            // Apply Drag (Friction)
+            if (drag > 0) {
+                boid.vx *= (1 - drag);
+                boid.vy *= (1 - drag);
+            }
+
+            // Apply Noise (Rotation)
+            if (noise > 0) {
+                const angle = (Math.random() - 0.5) * noise * 2; // -noise to +noise
+                const cos = Math.cos(angle);
+                const sin = Math.sin(angle);
+                const nvx = boid.vx * cos - boid.vy * sin;
+                const nvy = boid.vx * sin + boid.vy * cos;
+                boid.vx = nvx;
+                boid.vy = nvy;
+            }
+
             // Attractor (Touch)
             if (attractor) {
                 const attrForce = this._attr.set(attractor.x - boid.x, attractor.y - boid.y);
@@ -180,9 +201,7 @@ export class Flock {
             // Add boids
             for (let i = this.boids.length; i < count; i++) {
                 this.boids.push({
-                    id: i, // ID might conflict if we reduced then increased. Best to use unique ID counter? 
-                    // For now index is fine if we just pop/push.
-                    // But if we want consistent ID, use a counter.
+                    id: i,
                     x: Math.random() * this.width,
                     y: Math.random() * this.height,
                     vx: (Math.random() - 0.5) * 4,
