@@ -58,13 +58,14 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
     const noise = useSimulationStore(s => s.noise);
     const alignmentBias = useSimulationStore(s => s.alignmentBias);
 
-    const verticesBuffers = useRef<{ x: number, y: number }[][]>([]);
-    const colorsBuffers = useRef<string[][]>([]);
+    const verticesBuffers = useRef<{ x: number, y: number }[][]>([[], []]);
+    const colorsBuffers = useRef<string[][]>([[], []]);
     const vertexBufferIndex = useRef(0);
     const colorBufferIndex = useRef(0);
     const lastColorUpdate = useRef(0);
     const lastColorMode = useRef<'solid' | 'velocity' | 'rainbow'>('solid');
     const colorPhase = useRef(0);
+    const isInitialized = useRef(false);
 
     // Shared Values for rendering
     // Vertices expects SkPoint[] ({x,y})
@@ -102,6 +103,8 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
         vertices.value = newVerticesA;
         vertexColors.value = newColorsA;
         vertexColors.value = newColorsA;
+
+        isInitialized.current = true;
     }, [boidCount]);
 
     // Monitor AppState (Tab visibility/Background)
@@ -115,7 +118,7 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
 
     // Frame Loop
     useFrameCallback((frameInfo) => {
-        if (!isPlaying || !isAppActive.value) return;
+        if (!isInitialized.current || !isPlaying || !isAppActive.value) return;
 
         // Read touch state
         const touch = touchState.value;
