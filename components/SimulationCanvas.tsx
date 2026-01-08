@@ -1,7 +1,7 @@
 import { Canvas, Fill, Vertices } from '@shopify/react-native-skia';
 import React, { useEffect, useRef } from 'react';
 import { AppState, useWindowDimensions } from 'react-native';
-import { SharedValue, useFrameCallback, useSharedValue } from 'react-native-reanimated';
+import { SharedValue, useSharedValue } from 'react-native-reanimated';
 import { DEFAULTS } from '../constants/defaults';
 import { Flock } from '../lib/simulation/Flock';
 import { useSimulationStore } from '../lib/store/simulationStore';
@@ -132,18 +132,24 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
     }, []);
 
 
-    // Frame Loop
-    useFrameCallback((frameInfo) => {
-        // CRITICAL: All checks must use SharedValues for UI thread synchronization
-        if (!isInitialized.value || !isPlayingShared.value || !isAppActive.value) return;
+    // JS-Thread Simulation Loop (Part B Fix)
+    // We MUST run the simulation on the JS thread because 'flock' is a JS object (class)
+    // and cannot be safely accessed from the UI thread worklet on iOS.
+    useEffect(() => {
+        let frameId: number;
 
-        try {
-            // Read touch state
+        const loop = (timestamp: number) => {
+            // Continue loop immediately
+            frameId = requestAnimationFrame(loop);
+
+            if (!isPlaying || !isAppActive.value) return;
+
+            // Read touch state (SharedValue can be read on JS thread)
             const touch = touchState.value;
-            const strength = touch.mode === 3 ? -50 : (touch.mode === 2 ? -5 : 5); // Mode 3: Explode (-50), Mode 2: Repel (-5), Mode 1: Attract (5)
+            const strength = touch.mode === 3 ? -50 : (touch.mode === 2 ? -5 : 5);
             const attractor = touch.active ? { x: touch.x, y: touch.y, strength } : undefined;
 
-            // Run simulation
+            // Run simulation (JS Thread)
             flock.update(1.0, {
                 perceptionRadius,
                 maxSpeed,
@@ -157,7 +163,7 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
                 attractor
             });
 
-            // Update Vertices
+            // Flatten data for SharedValues (Pass to UI Thread)
             const numBoids = flock.boids.length;
             if (numBoids === 0) return;
 
@@ -169,32 +175,31 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
             const invMaxSpeed = maxSpeed > 0 ? 1 / maxSpeed : 0;
             const colorStride = useColor ? getColorStride(numBoids) : 1;
 
+            // We can reuse current buffers or create new ones.
+            // For SharedValue updates, creating new TypedArrays is safe/optimized by JSI.
+            // Actually, let's just reuse the logic mapping boids to vertices
             const buffers = verticesBuffers.current;
             const colorBuffers = colorsBuffers.current;
-            if (!buffers || buffers.length < 2 || !colorBuffers || colorBuffers.length < 2) {
-                return;
-            }
+            // Ensure buffers are ready (handled by boidCount effect, but good to check)
+            if (!buffers || buffers.length < 2 || !colorBuffers || colorBuffers[0].length < numVertices) return;
 
             const nextVertexIndex = vertexBufferIndex.current ^ 1;
             const verts = buffers[nextVertexIndex];
-            if (!verts || verts.length !== numVertices) {
-                return;
-            }
+            // Reset/Fill operations...
+
+            // NOTE: We are on JS thread, so we can use standard loops
 
             const shouldUpdateColors = useColor && (
                 lastColorMode.current !== colorMode ||
-                frameInfo.timestamp - lastColorUpdate.current >= COLOR_UPDATE_INTERVAL_MS
+                timestamp - lastColorUpdate.current >= COLOR_UPDATE_INTERVAL_MS
             );
             const timeHue = shouldUpdateColors && !useVelocityColor
-                ? Math.floor(frameInfo.timestamp / 20) % 360
+                ? Math.floor(timestamp / 20) % 360
                 : 0;
 
             const nextColorIndex = shouldUpdateColors ? (colorBufferIndex.current ^ 1) : colorBufferIndex.current;
             const colors = colorBuffers[nextColorIndex];
-            if (!colors || colors.length !== numVertices) {
-                return;
-            }
-            const colorsAlt = colorBuffers[nextColorIndex ^ 1];
+            const colorsAlt = colorBuffers[nextColorIndex ^ 1]; // For double buffer sync if needed
 
             for (let i = 0; i < numBoids; i++) {
                 const b = flock.boids[i];
@@ -215,15 +220,23 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
                     dy = vy * invSpeed;
                 }
 
+                // ... vertex math ...
                 const px = -dy;
                 const py = dx;
                 const baseX = b.x - (dx * size);
                 const baseY = b.y - (dy * size);
 
                 const idx = i * 3;
-                const v0 = verts[idx] || (verts[idx] = { x: 0, y: 0 });
-                const v1 = verts[idx + 1] || (verts[idx + 1] = { x: 0, y: 0 });
-                const v2 = verts[idx + 2] || (verts[idx + 2] = { x: 0, y: 0 });
+                const v0 = verts[idx];
+                const v1 = verts[idx + 1];
+                const v2 = verts[idx + 2];
+                // Note: If buffers reallocated, these might be undefined if we didn't fill objects
+                // But our init loop fills objects.
+                // Safety check:
+                if (!v0) {
+                    // Rare race condition if resize happens mid-loop?
+                    continue;
+                }
 
                 v0.x = b.x + (dx * size);
                 v0.y = b.y + (dy * size);
@@ -234,7 +247,6 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
 
                 if (shouldUpdateColors && (i + colorPhase.current) % colorStride === 0) {
                     let color = '#00ffff';
-
                     if (useVelocityColor) {
                         let paletteIndex = (speed * invMaxSpeed * 255) | 0;
                         if (paletteIndex < 0) paletteIndex = 0;
@@ -244,10 +256,10 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
                         const hueIndex = (timeHue + (b.id * 5)) % 360;
                         color = RAINBOW_PALETTE[hueIndex];
                     }
-
                     colors[idx] = color;
                     colors[idx + 1] = color;
                     colors[idx + 2] = color;
+                    // Sync alt buffer to avoid flickering when switching
                     if (colorsAlt) {
                         colorsAlt[idx] = color;
                         colorsAlt[idx + 1] = color;
@@ -256,20 +268,34 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
                 }
             }
 
+            // Push to SharedValue (UI Thread update)
             vertices.value = verts;
             vertexBufferIndex.current = nextVertexIndex;
+
             if (shouldUpdateColors) {
                 vertexColors.value = colors;
                 colorBufferIndex.current = nextColorIndex;
-                lastColorUpdate.current = frameInfo.timestamp;
+                lastColorUpdate.current = timestamp;
                 colorPhase.current = (colorPhase.current + 1) % colorStride;
             }
             lastColorMode.current = colorMode;
+        };
 
-        } catch (e) {
-            console.warn('Frame callback error:', e);
-        }
-    });
+        frameId = requestAnimationFrame(loop);
+
+        return () => cancelAnimationFrame(frameId);
+    }, [
+        // Dependency list for the effect. 
+        // Ideally we want to avoid restarting the loop constantly. 
+        // Most params are read from store via hooks, so they are stable values?
+        // Wait, boidCount, perceptionRadius etc ARE simulation store values.
+        // If they change, the effect re-runs. 
+        // The loop is efficient enough to restart. 
+        isPlaying, isAppActive,
+        boidCount, perceptionRadius, maxSpeed, maxForce, separationWeight,
+        alignmentWeight, cohesionWeight, drag, noise, alignmentBias,
+        theme, colorMode // Rendering params
+    ]);
 
     const paintColor = theme === 'dark' ? "cyan" : "blue";
     const bg = theme === 'dark' ? "#111" : "#fff";

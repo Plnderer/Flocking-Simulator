@@ -38,6 +38,13 @@ export const TouchHandler = ({ children, touchState, onDoubleTap, onSettings }: 
             touchState.value = { ...touchState.value, active: 0, mode: 0 };
         });
 
+    // Stable callback to reset touch state on JS thread
+    const resetTouchState = React.useCallback(() => {
+        setTimeout(() => {
+            touchState.value = { ...touchState.value, active: 0, mode: 0 };
+        }, 200);
+    }, []);
+
     const longPress = Gesture.LongPress()
         .minDuration(400)
         .onStart((e) => {
@@ -58,11 +65,7 @@ export const TouchHandler = ({ children, touchState, onDoubleTap, onSettings }: 
             };
 
             // Reset after short delay to stop explosion
-            runOnJS(() => {
-                setTimeout(() => {
-                    touchState.value = { ...touchState.value, active: 0, mode: 0 };
-                }, 200);
-            })();
+            runOnJS(resetTouchState)();
         });
 
     // Double tap
