@@ -32,13 +32,13 @@ export default function HomeScreen() {
         }
     }, []);
 
-    const handleDoubleTap = () => {
+    const handleDoubleTap = React.useCallback(() => {
         // Explosion Effect
         touchState.value = { ...touchState.value, active: 1, mode: 3 };
         setTimeout(() => {
             touchState.value = { ...touchState.value, active: 0, mode: 0 };
         }, 300);
-    };
+    }, []);
 
     return (
         <View style={styles.container}>
