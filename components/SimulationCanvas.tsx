@@ -117,7 +117,10 @@ export const SimulationCanvas = ({ touchState }: SimulationCanvasProps) => {
         vertexColors.value = newColorsA;
 
         // CRITICAL: Mark ready AFTER all buffers are initialized
-        isInitialized.value = 1;
+        // Use a small timeout to let the UI thread catch up with the SharedValue update
+        setTimeout(() => {
+            isInitialized.value = 1;
+        }, 16);
     }, [boidCount]);
 
     // Monitor AppState (Tab visibility/Background)

@@ -1,17 +1,18 @@
+import { FPSCounter } from '@/components/FPSCounter';
+import { SettingsSheet } from '@/components/SettingsSheet';
+import { TouchHandler, TouchState } from '@/components/TouchHandler';
+import { useSimulationStore } from '@/lib/store/simulationStore';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSharedValue } from 'react-native-reanimated';
-import { FPSCounter } from '../components/FPSCounter';
-import { SettingsSheet } from '../components/SettingsSheet';
-import { TouchHandler, TouchState } from '../components/TouchHandler';
-import { useSimulationStore } from '../lib/store/simulationStore';
+
 // Lazy load SimulationCanvas to prevent Skia import execution before Web initialization
 const SimulationCanvas = React.lazy(() =>
-    import('../components/SimulationCanvas').then(module => ({ default: module.SimulationCanvas }))
+    import('@/components/SimulationCanvas').then(module => ({ default: module.SimulationCanvas }))
 );
 
-export default function App() {
+export default function HomeScreen() {
     const [settingsVisible, setSettingsVisible] = useState(false);
     const touchState = useSharedValue<TouchState>({ active: 0, x: 0, y: 0, mode: 0 });
     const showDebug = useSimulationStore(s => s.showDebug);
@@ -33,11 +34,7 @@ export default function App() {
 
     const handleDoubleTap = () => {
         // Explosion Effect
-        touchState.value = { ...touchState.value, active: 1, mode: 3 }; // Mode 3 = explode?
-        // Reset after short delay handled by update loop? 
-        // Or we rely on TouchHandler to reset interaction on lift.
-        // Wait, double tap is an event, not a persistent state like hold.
-        // So we pulse the mode.
+        touchState.value = { ...touchState.value, active: 1, mode: 3 };
         setTimeout(() => {
             touchState.value = { ...touchState.value, active: 0, mode: 0 };
         }, 300);
@@ -101,7 +98,7 @@ const styles = StyleSheet.create({
     settingsButton: {
         position: 'absolute',
         bottom: 30,
-        right: 20, // Bottom-right corner
+        right: 20,
         width: 44,
         height: 44,
         borderRadius: 22,
@@ -116,7 +113,7 @@ const styles = StyleSheet.create({
     playButton: {
         position: 'absolute',
         bottom: 30,
-        right: 80, // Left of settings
+        right: 80,
         width: 44,
         height: 44,
         borderRadius: 22,
