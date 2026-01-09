@@ -1,6 +1,6 @@
 // Physics defaults (Matched to boids.dan.onl)
 export const DEFAULTS = {
-    BOID_COUNT: 1500, // Reference default
+    BOID_COUNT: 300, // Reduced for stability (refer to walkthrough)
     PERCEPTION_RADIUS: 25,
     MAX_SPEED: 4.0,
     MAX_FORCE: 0.2, // "Steering Force"
