@@ -1,63 +1,70 @@
 import { DEFAULTS } from '../../constants/defaults';
-import { Boid } from './Boid';
 import { SpatialGrid, type NeighborAccumulation } from './SpatialGrid';
-import { Vector2D } from './Vector2D';
 
 export class Flock {
-    boids: Boid[] = [];
+    count: number = 0;
+
+    // Structure of Arrays (SoA)
+    // Pre-allocate for max capacity to avoid re-allocation during runtime
+    x: Float32Array;
+    y: Float32Array;
+    vx: Float32Array;
+    vy: Float32Array;
+
     grid: SpatialGrid;
     width: number = 0;
     height: number = 0;
 
-    // Reuse vectors to avoid allocation
-    private _sep = new Vector2D();
-    private _ali = new Vector2D();
-    private _coh = new Vector2D();
-    private _attr = new Vector2D();
+    // Reusable accumulation object
     private _accum: NeighborAccumulation = {
         count: 0,
-        sepX: 0,
-        sepY: 0,
-        alignX: 0,
-        alignY: 0,
-        cohX: 0,
-        cohY: 0,
+        sepX: 0, sepY: 0,
+        alignX: 0, alignY: 0,
+        cohX: 0, cohY: 0,
     };
 
-    constructor(count: number = DEFAULTS.BOID_COUNT) {
-        // Initial dummy size, will be resized on first update
-        this.grid = new SpatialGrid(100, 100, DEFAULTS.PERCEPTION_RADIUS);
-        this.initBoids(count);
-    }
+    constructor(initialCount: number = DEFAULTS.BOID_COUNT) {
+        const capacity = 5000; // Hard cap buffer size
+        this.x = new Float32Array(capacity);
+        this.y = new Float32Array(capacity);
+        this.vx = new Float32Array(capacity);
+        this.vy = new Float32Array(capacity);
 
-    initBoids(count: number) {
-        this.boids = [];
-        for (let i = 0; i < count; i++) {
-            this.boids.push({
-                id: i,
-                x: Math.random() * (this.width || 100),
-                y: Math.random() * (this.height || 100),
-                vx: (Math.random() - 0.5) * DEFAULTS.MAX_SPEED * 2,
-                vy: (Math.random() - 0.5) * DEFAULTS.MAX_SPEED * 2,
-            });
-        }
+        // Initial dummy size
+        this.grid = new SpatialGrid(100, 100, DEFAULTS.PERCEPTION_RADIUS);
+        this.setBoidCount(initialCount);
     }
 
     resize(width: number, height: number, perceptionRadius: number) {
         this.width = width;
         this.height = height;
-        // Recreate grid with new dimensions
         this.grid = new SpatialGrid(width, height, perceptionRadius);
 
-        // Ensure boids are within bounds
-        this.boids.forEach(b => {
-            if (b.x > width) b.x = width;
-            if (b.y > height) b.y = height;
-        });
+        // Clamp positions
+        for (let i = 0; i < this.count; i++) {
+            if (this.x[i] > width) this.x[i] = width;
+            if (this.y[i] > height) this.y[i] = height;
+        }
+    }
+
+    setBoidCount(targetCount: number) {
+        if (targetCount === this.count) return;
+
+        // If increasing, initialize new boids
+        if (targetCount > this.count) {
+            for (let i = this.count; i < targetCount; i++) {
+                this.x[i] = Math.random() * (this.width || 100);
+                this.y[i] = Math.random() * (this.height || 100);
+                this.vx[i] = (Math.random() - 0.5) * 4;
+                this.vy[i] = (Math.random() - 0.5) * 4;
+            }
+        }
+
+        this.count = targetCount;
     }
 
     update(
-        dt: number, // Delta time (seconds) - used for smoother movement integration if needed, usually 1.0 for simple Euler steps
+        dt: number,
         params: {
             perceptionRadius: number;
             maxSpeed: number;
@@ -68,167 +75,156 @@ export class Flock {
             drag: number;
             noise: number;
             alignmentBias: number;
-            attractor?: { x: number, y: number, strength: number }; // For touch interaction
+            attractor?: { x: number, y: number, strength: number };
         }
     ) {
         // 1. Rebuild Grid
-        if (this.grid.getCellSize() !== params.perceptionRadius) {
-            this.grid = new SpatialGrid(this.width, this.height, params.perceptionRadius);
+        const { perceptionRadius, maxSpeed, maxForce, separationWeight, alignmentWeight, cohesionWeight, drag, noise, alignmentBias, attractor } = params;
+
+        if (this.grid.getCellSize() !== perceptionRadius) {
+            this.grid = new SpatialGrid(this.width, this.height, perceptionRadius);
         } else {
             this.grid.clear();
         }
 
-        for (const boid of this.boids) {
-            this.grid.add(boid);
+        // Add indices to grid
+        for (let i = 0; i < this.count; i++) {
+            this.grid.add(i, this.x[i], this.y[i]);
         }
 
-        const { perceptionRadius, maxSpeed, maxForce, separationWeight, alignmentWeight, cohesionWeight, drag, noise, alignmentBias, attractor } = params;
         const perceptionRadiusSq = perceptionRadius * perceptionRadius;
         const maxSpeedSq = maxSpeed * maxSpeed;
 
-        // 2. Update Boids
-        for (const boid of this.boids) {
-            // Pass alignmentBias to accumulator for weighted alignment
-            const accum = this.grid.accumulate(boid, perceptionRadiusSq, alignmentBias, this._accum);
+        // 2. Physics Loop
+        for (let i = 0; i < this.count; i++) {
+            const accum = this.grid.accumulate(
+                i,
+                this.x[i], this.y[i], this.vx[i], this.vy[i],
+                this.x, this.y, this.vx, this.vy,
+                perceptionRadiusSq, alignmentBias, this._accum
+            );
+
+            let forceX = 0;
+            let forceY = 0;
 
             if (accum.count > 0) {
                 const invCount = 1 / accum.count;
 
-                const sep = this._sep.set(accum.sepX * invCount, accum.sepY * invCount);
-                if (sep.magSq() > 0) {
-                    sep.normalize();
-                    sep.mult(maxSpeed);
-                    sep.x -= boid.vx;
-                    sep.y -= boid.vy;
-                    sep.limit(maxForce);
-                } else {
-                    sep.set(0, 0);
-                }
-
-                const ali = this._ali.set(accum.alignX * invCount, accum.alignY * invCount);
-                if (ali.magSq() > 0) {
-                    ali.normalize();
-                    ali.mult(maxSpeed);
-                    ali.x -= boid.vx;
-                    ali.y -= boid.vy;
-                    ali.limit(maxForce);
-                } else {
-                    ali.set(0, 0);
-                }
-
-                const coh = this._coh.set(
-                    (accum.cohX * invCount) - boid.x,
-                    (accum.cohY * invCount) - boid.y
-                );
-                if (coh.magSq() > 0) {
-                    coh.normalize();
-                    coh.mult(maxSpeed);
-                    coh.x -= boid.vx;
-                    coh.y -= boid.vy;
-                    coh.limit(maxForce);
-                } else {
-                    coh.set(0, 0);
-                }
-            } else {
-                this._sep.set(0, 0);
-                this._ali.set(0, 0);
-                this._coh.set(0, 0);
-            }
-
-            this._sep.mult(separationWeight);
-            this._ali.mult(alignmentWeight);
-            this._coh.mult(cohesionWeight);
-
-            // Apply forces
-            boid.vx += this._sep.x + this._ali.x + this._coh.x;
-            boid.vy += this._sep.y + this._ali.y + this._coh.y;
-
-            // Apply Drag (Friction)
-            if (drag > 0) {
-                boid.vx *= (1 - drag);
-                boid.vy *= (1 - drag);
-            }
-
-            // Apply Noise (Rotation)
-            if (noise > 0) {
-                const angle = (Math.random() - 0.5) * noise * 2; // -noise to +noise
-                const cos = Math.cos(angle);
-                const sin = Math.sin(angle);
-                const nvx = boid.vx * cos - boid.vy * sin;
-                const nvy = boid.vx * sin + boid.vy * cos;
-                boid.vx = nvx;
-                boid.vy = nvy;
-            }
-
-            // Attractor (Touch)
-            if (attractor) {
-                const attrForce = this._attr.set(attractor.x - boid.x, attractor.y - boid.y);
-                const distSq = attrForce.magSq();
-                if (distSq > 0 && distSq < 300 * 300) { // Limit attraction range
-                    const invDist = 1 / Math.sqrt(distSq);
-                    attrForce.x *= invDist;
-                    attrForce.y *= invDist;
-                    attrForce.mult(maxForce * attractor.strength); // Stronger than normal forces
-                    boid.vx += attrForce.x;
-                    boid.vy += attrForce.y;
-                }
-            }
-
-            // Limit speed (Max)
-            const speedSq = boid.vx * boid.vx + boid.vy * boid.vy;
-            if (speedSq > maxSpeedSq) {
-                const invSpeed = 1 / Math.sqrt(speedSq);
-                boid.vx = boid.vx * invSpeed * maxSpeed;
-                boid.vy = boid.vy * invSpeed * maxSpeed;
-            } else {
-                // Minimum Speed (Propulsion)
-                // If they slow down too much (due to drag), boost them back up.
-                // This ensures "scattered" boids keep moving directly forward.
-                const minSpeed = maxSpeed * 0.5; // Cruising speed
-                const minSpeedSq = minSpeed * minSpeed;
-                if (speedSq < minSpeedSq) {
-                    if (speedSq > 0.0001) {
-                        const invSpeed = 1 / Math.sqrt(speedSq);
-                        boid.vx = boid.vx * invSpeed * minSpeed;
-                        boid.vy = boid.vy * invSpeed * minSpeed;
-                    } else {
-                        // Dead stop? Kick them in a random direction
-                        const angle = Math.random() * Math.PI * 2;
-                        boid.vx = Math.cos(angle) * minSpeed;
-                        boid.vy = Math.sin(angle) * minSpeed;
+                // Separation
+                let sepX = accum.sepX * invCount;
+                let sepY = accum.sepY * invCount;
+                const sepMagSq = sepX * sepX + sepY * sepY;
+                if (sepMagSq > 0) {
+                    const invMag = 1 / Math.sqrt(sepMagSq);
+                    sepX = (sepX * invMag * maxSpeed) - this.vx[i];
+                    sepY = (sepY * invMag * maxSpeed) - this.vy[i];
+                    // Limit force
+                    const forceSq = sepX * sepX + sepY * sepY;
+                    if (forceSq > maxForce * maxForce) {
+                        const invF = maxForce / Math.sqrt(forceSq);
+                        sepX *= invF;
+                        sepY *= invF;
                     }
                 }
+
+                // Alignment
+                let aliX = accum.alignX * invCount;
+                let aliY = accum.alignY * invCount;
+                const aliMagSq = aliX * aliX + aliY * aliY;
+                if (aliMagSq > 0) {
+                    const invMag = 1 / Math.sqrt(aliMagSq);
+                    aliX = (aliX * invMag * maxSpeed) - this.vx[i];
+                    aliY = (aliY * invMag * maxSpeed) - this.vy[i];
+                    const forceSq = aliX * aliX + aliY * aliY;
+                    if (forceSq > maxForce * maxForce) {
+                        const invF = maxForce / Math.sqrt(forceSq);
+                        aliX *= invF;
+                        aliY *= invF;
+                    }
+                }
+
+                // Cohesion
+                let cohX = (accum.cohX * invCount) - this.x[i];
+                let cohY = (accum.cohY * invCount) - this.y[i];
+                const cohMagSq = cohX * cohX + cohY * cohY;
+                if (cohMagSq > 0) {
+                    const invMag = 1 / Math.sqrt(cohMagSq);
+                    cohX = (cohX * invMag * maxSpeed) - this.vx[i];
+                    cohY = (cohY * invMag * maxSpeed) - this.vy[i];
+                    const forceSq = cohX * cohX + cohY * cohY;
+                    if (forceSq > maxForce * maxForce) {
+                        const invF = maxForce / Math.sqrt(forceSq);
+                        cohX *= invF;
+                        cohY *= invF;
+                    }
+                }
+
+                forceX += sepX * separationWeight + aliX * alignmentWeight + cohX * cohesionWeight;
+                forceY += sepX * separationWeight + aliY * alignmentWeight + cohY * cohesionWeight;
             }
 
-            // Update Position
-            boid.x += boid.vx; // We assume dt=1 for step, since we run per frame. Scale if needed.
-            boid.y += boid.vy;
+            // Apply Forces
+            this.vx[i] += forceX;
+            this.vy[i] += forceY;
 
-            // Wrap Edges
-            if (boid.x < 0) boid.x = this.width;
-            if (boid.x > this.width) boid.x = 0;
-            if (boid.y < 0) boid.y = this.height;
-            if (boid.y > this.height) boid.y = 0;
-        }
-    }
-
-    setBoidCount(count: number) {
-        if (count === this.boids.length) return;
-
-        if (count > this.boids.length) {
-            // Add boids
-            for (let i = this.boids.length; i < count; i++) {
-                this.boids.push({
-                    id: i,
-                    x: Math.random() * this.width,
-                    y: Math.random() * this.height,
-                    vx: (Math.random() - 0.5) * 4,
-                    vy: (Math.random() - 0.5) * 4,
-                });
+            // Drag
+            if (drag > 0) {
+                this.vx[i] *= (1 - drag);
+                this.vy[i] *= (1 - drag);
             }
-        } else {
-            // Remove boids
-            this.boids.splice(count);
+
+            // Noise
+            if (noise > 0) {
+                const angle = (Math.random() - 0.5) * noise * 2;
+                const cos = Math.cos(angle);
+                const sin = Math.sin(angle);
+                const nvx = this.vx[i] * cos - this.vy[i] * sin;
+                const nvy = this.vx[i] * sin + this.vy[i] * cos;
+                this.vx[i] = nvx;
+                this.vy[i] = nvy;
+            }
+
+            // Attractor
+            if (attractor) {
+                let attrX = attractor.x - this.x[i];
+                let attrY = attractor.y - this.y[i];
+                const distSq = attrX * attrX + attrY * attrY;
+                if (distSq > 0 && distSq < 300 * 300) {
+                    const invDist = 1 / Math.sqrt(distSq);
+                    attrX *= invDist;
+                    attrY *= invDist;
+                    // Strength multiplier
+                    const s = maxForce * attractor.strength;
+                    this.vx[i] += attrX * s;
+                    this.vy[i] += attrY * s;
+                }
+            }
+
+            // Limit Speed
+            const currentSpeedSq = this.vx[i] * this.vx[i] + this.vy[i] * this.vy[i];
+            if (currentSpeedSq > maxSpeedSq) {
+                const invSpeed = 1 / Math.sqrt(currentSpeedSq);
+                this.vx[i] = this.vx[i] * invSpeed * maxSpeed;
+                this.vy[i] = this.vy[i] * invSpeed * maxSpeed;
+            } else {
+                // Min Speed Boost
+                const minSpeed = maxSpeed * 0.5;
+                if (currentSpeedSq < minSpeed * minSpeed && currentSpeedSq > 0.0001) {
+                    const invSpeed = 1 / Math.sqrt(currentSpeedSq);
+                    this.vx[i] = this.vx[i] * invSpeed * minSpeed;
+                    this.vy[i] = this.vy[i] * invSpeed * minSpeed;
+                }
+            }
+
+            // Integate
+            this.x[i] += this.vx[i] * dt;
+            this.y[i] += this.vy[i] * dt;
+
+            // Wrap
+            if (this.x[i] < 0) this.x[i] = this.width;
+            if (this.x[i] > this.width) this.x[i] = 0;
+            if (this.y[i] < 0) this.y[i] = this.height;
+            if (this.y[i] > this.height) this.y[i] = 0;
         }
     }
 }

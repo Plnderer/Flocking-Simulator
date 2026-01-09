@@ -16,11 +16,14 @@ interface SimulationState {
 
     // Visuals
     showDebug: boolean;
+    showVision: boolean;
+    showDirection: boolean;
     theme: 'dark' | 'light';
     colorMode: 'solid' | 'velocity' | 'rainbow';
     drag: number;
     noise: number;
     alignmentBias: number;
+    bounce: boolean;
 
     // Actions
     setBoidCount: (count: number) => void;
@@ -32,12 +35,16 @@ interface SimulationState {
     setCohesionWeight: (w: number) => void;
     togglePlay: () => void;
     toggleDebug: () => void;
+    toggleVision: () => void;
+    toggleDirection: () => void;
     toggleTheme: () => void;
     setColorMode: (mode: 'solid' | 'velocity' | 'rainbow') => void;
     setDrag: (d: number) => void;
     setNoise: (n: number) => void;
     setAlignmentBias: (b: number) => void;
     resetDefaults: () => void;
+    // Generic setter for batch updates or specific property updates
+    set: (partial: Partial<SimulationState>) => void;
 }
 
 export const useSimulationStore = create<SimulationState>()(
@@ -53,11 +60,14 @@ export const useSimulationStore = create<SimulationState>()(
             trailLength: DEFAULTS.TRAIL_LENGTH,
             isPlaying: true,
             showDebug: false,
+            showVision: false,
+            showDirection: false,
             theme: 'dark',
             colorMode: 'solid',
             drag: DEFAULTS.DRAG,
             noise: DEFAULTS.NOISE,
             alignmentBias: DEFAULTS.ALIGNMENT_BIAS,
+            bounce: false,
 
             setBoidCount: (count) => set({ boidCount: Math.min(Math.max(count, CONSTRAINTS.MIN_BOID_COUNT), CONSTRAINTS.MAX_BOID_COUNT) }),
             setPerceptionRadius: (n) => set({ perceptionRadius: Math.min(Math.max(n, CONSTRAINTS.MIN_PERCEPTION), CONSTRAINTS.MAX_PERCEPTION) }),
@@ -68,6 +78,8 @@ export const useSimulationStore = create<SimulationState>()(
             setCohesionWeight: (w) => set({ cohesionWeight: w }),
             togglePlay: () => set((state) => ({ isPlaying: !state.isPlaying })),
             toggleDebug: () => set((state) => ({ showDebug: !state.showDebug })),
+            toggleVision: () => set((state) => ({ showVision: !state.showVision })),
+            toggleDirection: () => set((state) => ({ showDirection: !state.showDirection })),
             toggleTheme: () => set((state) => ({ theme: state.theme === 'dark' ? 'light' : 'dark' })),
             setColorMode: (mode) => set({ colorMode: mode }),
             setDrag: (d) => set({ drag: d }),
@@ -84,10 +96,14 @@ export const useSimulationStore = create<SimulationState>()(
                 drag: DEFAULTS.DRAG,
                 noise: DEFAULTS.NOISE,
                 alignmentBias: DEFAULTS.ALIGNMENT_BIAS,
+                bounce: false,
+                showVision: false,
+                showDirection: false,
             }),
+            set: (partial) => set(partial),
         }),
         {
-            name: 'simulation-settings',
+            name: 'simulation-storage',
             storage: createJSONStorage(() => AsyncStorage),
         }
     )

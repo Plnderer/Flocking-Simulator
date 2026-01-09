@@ -1,5 +1,3 @@
-import { Boid } from './Boid';
-
 export type NeighborAccumulation = {
     count: number;
     sepX: number;
@@ -16,7 +14,13 @@ export class SpatialGrid {
     private height: number;
     private cols: number;
     private rows: number;
-    private cells: Boid[][];
+    // Store indices instead of Boid objects
+    // We'll flatten the grid: cells[cellIndex] = [boidIndex, boidIndex...]
+    // Using a simple array of number arrays for flexibility, although a linked list in TypedArrays would be faster,
+    // let's stick to Array<number[]> for now as it's already a huge improvement over Array<Boid[]>.
+    // To truly optimize GC, we could use a fixed size TypedArray linked list, but that's complex to resize.
+    // Let's optimize the inner loops first.
+    private cells: number[][];
 
     constructor(width: number, height: number, cellSize: number) {
         this.width = width;
@@ -35,8 +39,9 @@ export class SpatialGrid {
     }
 
     clear() {
-        for (const cell of this.cells) {
-            cell.length = 0;
+        // Clearing arrays is cheaper than reallocating
+        for (let i = 0; i < this.cells.length; i++) {
+            this.cells[i].length = 0;
         }
     }
 
@@ -58,16 +63,26 @@ export class SpatialGrid {
         return row * this.cols + col;
     }
 
-    add(boid: Boid) {
-        const col = this.getCol(boid.x);
-        const row = this.getRow(boid.y);
-        const index = this.getIndex(col, row);
-        if (this.cells[index]) {
-            this.cells[index].push(boid);
+    add(index: number, x: number, y: number) {
+        // Guard against NaN/Infinity
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+        const col = this.getCol(x);
+        const row = this.getRow(y);
+        const cellIndex = this.getIndex(col, row);
+
+        // Safety check for bounds
+        if (this.cells[cellIndex]) {
+            this.cells[cellIndex].push(index);
         }
     }
 
-    accumulate(boid: Boid, radiusSq: number, alignmentBias: number, out: NeighborAccumulation): NeighborAccumulation {
+    accumulate(
+        subjectIndex: number,
+        sx: number, sy: number, svx: number, svy: number,
+        xArray: Float32Array, yArray: Float32Array, vxArray: Float32Array, vyArray: Float32Array,
+        radiusSq: number, alignmentBias: number, out: NeighborAccumulation
+    ): NeighborAccumulation {
         out.count = 0;
         out.sepX = 0;
         out.sepY = 0;
@@ -76,8 +91,22 @@ export class SpatialGrid {
         out.cohX = 0;
         out.cohY = 0;
 
-        const col = this.getCol(boid.x);
-        const row = this.getRow(boid.y);
+        // Guard against invalid inputs
+        if (!Number.isFinite(sx) || !Number.isFinite(sy)) return out;
+
+        const col = this.getCol(sx);
+        const row = this.getRow(sy);
+
+        // Pre-calculate bias check
+        // Prevent 0^negative which is Infinity.
+        const effectiveBias = Math.max(0.01, alignmentBias);
+        const useBias = effectiveBias !== 1.0;
+
+        let myMag = 0;
+        if (useBias) {
+            myMag = Math.sqrt(svx * svx + svy * svy);
+            if (myMag < 0.001) myMag = 0.001; // Avoid div by zero
+        }
 
         // Check 3x3 surrounding cells
         for (let i = -1; i <= 1; i++) {
@@ -86,46 +115,48 @@ export class SpatialGrid {
             for (let j = -1; j <= 1; j++) {
                 const nrow = row + j;
                 if (nrow < 0 || nrow >= this.rows) continue;
-                const cellBoids = this.cells[this.getIndex(ncol, nrow)];
-                if (!cellBoids) continue;
-                for (const other of cellBoids) {
-                    if (other.id !== boid.id) {
-                        const dx = boid.x - other.x;
-                        const dy = boid.y - other.y;
+
+                const cellIndices = this.cells[this.getIndex(ncol, nrow)];
+                // Guard against undefined cell
+                if (!cellIndices) continue;
+
+                const len = cellIndices.length;
+                if (len === 0) continue;
+
+                for (let k = 0; k < len; k++) {
+                    const otherIdx = cellIndices[k];
+                    if (otherIdx !== subjectIndex) {
+                        const ox = xArray[otherIdx];
+                        const oy = yArray[otherIdx];
+                        const dx = sx - ox;
+                        const dy = sy - oy;
                         const distSq = dx * dx + dy * dy;
+
                         if (distSq > 0 && distSq < radiusSq) {
                             out.count++;
                             const invDistSq = 1 / distSq;
                             out.sepX += dx * invDistSq;
                             out.sepY += dy * invDistSq;
 
-                            // Alignment Bias: Weight neighbors by similarity in direction
-                            // dot product of normalized velocities? 
-                            // Simplification: dot product of unnormalized is fast, but bias is usually based on -1 to 1 range.
-                            // Assuming velocities are relatively similar magnitude.
-                            // Original repo: `opt.bias ** other.vel.dot(this.vel)` (presumably normalized if using dot for angle)
-                            // Actually, let's normalize just for the dot product to be safe standard behavior
-
-                            // Fast dot product approx (unnormalized)
-                            // dot = vx*ox + vy*oy
-                            // bias ^ dot
-                            // If bias is 1, weight is 1.
+                            const ovx = vxArray[otherIdx];
+                            const ovy = vyArray[otherIdx];
 
                             let weight = 1.0;
-                            if (alignmentBias !== 1.0) {
-                                // Normalized Dot Product (Cosine Similarity)
-                                const myMag = Math.sqrt(boid.vx * boid.vx + boid.vy * boid.vy) || 1;
-                                const otherMag = Math.sqrt(other.vx * other.vx + other.vy * other.vy) || 1;
-                                const dot = (boid.vx * other.vx + boid.vy * other.vy) / (myMag * otherMag);
-                                // dot is -1 to 1
-                                weight = Math.pow(alignmentBias, dot);
+                            if (useBias) {
+                                let otherMag = Math.sqrt(ovx * ovx + ovy * ovy);
+                                if (otherMag < 0.001) otherMag = 0.001;
+
+                                const dot = (svx * ovx + svy * ovy) / (myMag * otherMag);
+                                // dot is -1 to 1. 0.01 ^ -1 = 100. maxBias usually 4.
+                                // If bias is < 1, like 0, we clamped to 0.01.
+                                weight = Math.pow(effectiveBias, dot);
                             }
 
-                            out.alignX += other.vx * weight;
-                            out.alignY += other.vy * weight;
+                            out.alignX += ovx * weight;
+                            out.alignY += ovy * weight;
 
-                            out.cohX += other.x;
-                            out.cohY += other.y;
+                            out.cohX += ox;
+                            out.cohY += oy;
                         }
                     }
                 }

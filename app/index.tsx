@@ -1,20 +1,15 @@
 import { FPSCounter } from '@/components/FPSCounter';
-import { SettingsSheet } from '@/components/SettingsSheet';
-import { TouchHandler, TouchState } from '@/components/TouchHandler';
+import SettingsSheet from '@/components/SettingsSheet';
 import { useSimulationStore } from '@/lib/store/simulationStore';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useSharedValue } from 'react-native-reanimated';
 
-// Lazy load SimulationCanvas to prevent Skia import execution before Web initialization
-const SimulationCanvas = React.lazy(() =>
-    import('@/components/SimulationCanvas').then(module => ({ default: module.SimulationCanvas }))
-);
+// Lazy load SimulationCanvas
+const SimulationCanvas = React.lazy(() => import('@/components/SimulationCanvas'));
 
 export default function HomeScreen() {
     const [settingsVisible, setSettingsVisible] = useState(false);
-    const touchState = useSharedValue<TouchState>({ active: 0, x: 0, y: 0, mode: 0 });
     const showDebug = useSimulationStore(s => s.showDebug);
     const isPlaying = useSimulationStore(s => s.isPlaying);
     const togglePlay = useSimulationStore(s => s.togglePlay);
@@ -32,28 +27,14 @@ export default function HomeScreen() {
         }
     }, []);
 
-    const handleDoubleTap = React.useCallback(() => {
-        // Explosion Effect
-        touchState.value = { ...touchState.value, active: 1, mode: 3 };
-        setTimeout(() => {
-            touchState.value = { ...touchState.value, active: 0, mode: 0 };
-        }, 300);
-    }, []);
-
     return (
         <View style={styles.container}>
             <StatusBar style="auto" hidden />
 
             {skiaReady ? (
-                <TouchHandler
-                    touchState={touchState}
-                    onDoubleTap={handleDoubleTap}
-                    onSettings={() => setSettingsVisible(true)}
-                >
-                    <React.Suspense fallback={<ActivityIndicator style={{ position: 'absolute' }} />}>
-                        <SimulationCanvas touchState={touchState} />
-                    </React.Suspense>
-                </TouchHandler>
+                <React.Suspense fallback={<ActivityIndicator style={{ position: 'absolute' }} />}>
+                    <SimulationCanvas />
+                </React.Suspense>
             ) : (
                 <View style={styles.center}>
                     <ActivityIndicator size="large" color="#1FB28A" />
@@ -82,10 +63,11 @@ export default function HomeScreen() {
                 </>
             )}
 
-            <SettingsSheet
-                visible={settingsVisible}
-                onClose={() => setSettingsVisible(false)}
-            />
+            {settingsVisible && (
+                <View style={StyleSheet.absoluteFill}>
+                    <SettingsSheet onClose={() => setSettingsVisible(false)} />
+                </View>
+            )}
         </View>
     );
 }

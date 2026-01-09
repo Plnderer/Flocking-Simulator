@@ -1,253 +1,232 @@
 import Slider from '@react-native-community/slider';
 import React from 'react';
-import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { CONSTRAINTS } from '../constants/defaults';
 import { useSimulationStore } from '../lib/store/simulationStore';
 
-interface SettingsSheetProps {
-    visible: boolean;
-    onClose: () => void;
-}
-
-const ControlRow = ({ label, value, onValueChange, min, max, step = 0.1 }: any) => (
-    <View style={styles.row}>
-        <View style={styles.labelContainer}>
-            <Text style={styles.label}>{label}</Text>
-            <Text style={styles.value}>{value.toFixed(1)}</Text>
-        </View>
-        <Slider
-            style={{ height: 40 }}
-            minimumValue={min}
-            maximumValue={max}
-            step={step}
-            value={value}
-            onValueChange={onValueChange}
-            minimumTrackTintColor="#1FB28A"
-            maximumTrackTintColor="#d3d3d3"
-            thumbTintColor="#b9e4c9"
-        />
-    </View>
-);
-
-export const SettingsSheet = ({ visible, onClose }: SettingsSheetProps) => {
-    const store = useSimulationStore();
-    const insets = useSafeAreaInsets();
-
-    if (!visible) return null;
-
+// Helper for granular slider row
+const SettingRow = ({
+    label,
+    value,
+    setValue,
+    min,
+    max,
+    step = 0.1,
+    format = (v: number) => v.toFixed(1)
+}: {
+    label: string,
+    value: number,
+    setValue: (v: number) => void,
+    min: number,
+    max: number,
+    step?: number,
+    format?: (v: number) => string
+}) => {
     return (
-        <View style={[styles.container, { paddingBottom: insets.bottom }]}>
-            <View style={styles.header}>
-                <Text style={styles.title}>Simulation Settings</Text>
-                <TouchableOpacity onPress={onClose}>
-                    <Text style={styles.closeBtn}>Done</Text>
-                </TouchableOpacity>
+        <View style={styles.settingRow}>
+            <View style={styles.labelContainer}>
+                <Text style={styles.label}>{label}</Text>
+                <TextInput
+                    style={styles.valueInput}
+                    keyboardType="numeric"
+                    // Simple logic to keep it synced
+                    defaultValue={format(value)}
+                    onChangeText={(text) => {
+                        const num = parseFloat(text);
+                        if (!isNaN(num)) setValue(num);
+                    }}
+                />
             </View>
-
-            <ScrollView style={styles.content}>
-                <ControlRow
-                    label="Boid Count"
-                    value={store.boidCount}
-                    min={CONSTRAINTS.MIN_BOID_COUNT}
-                    max={CONSTRAINTS.MAX_BOID_COUNT}
-                    step={50}
-                    onValueChange={store.setBoidCount}
-                />
-                <ControlRow
-                    label="Perception Radius"
-                    value={store.perceptionRadius}
-                    min={CONSTRAINTS.MIN_PERCEPTION}
-                    max={CONSTRAINTS.MAX_PERCEPTION}
-                    step={1}
-                    onValueChange={store.setPerceptionRadius}
-                />
-                <ControlRow
-                    label="Max Speed"
-                    value={store.maxSpeed}
-                    min={CONSTRAINTS.MIN_SPEED}
-                    max={CONSTRAINTS.MAX_SPEED}
-                    step={0.5}
-                    onValueChange={store.setMaxSpeed}
-                />
-                <ControlRow
-                    label="Separation"
-                    value={store.separationWeight}
-                    min={0} max={5}
-                    onValueChange={store.setSeparationWeight}
-                />
-                <ControlRow
-                    label="Alignment"
-                    value={store.alignmentWeight}
-                    min={0} max={5}
-                    onValueChange={store.setAlignmentWeight}
-                />
-                <ControlRow
-                    label="Cohesion"
-                    value={store.cohesionWeight}
-                    min={0} max={5}
-                    onValueChange={store.setCohesionWeight}
-                />
-                <ControlRow
-                    label="Drag (Friction)"
-                    value={store.drag}
-                    min={CONSTRAINTS.MIN_DRAG}
-                    max={CONSTRAINTS.MAX_DRAG}
-                    step={0.001}
-                    onValueChange={store.setDrag}
-                />
-                <ControlRow
-                    label="Noise (Jitter)"
-                    value={store.noise}
-                    min={CONSTRAINTS.MIN_NOISE}
-                    max={CONSTRAINTS.MAX_NOISE}
-                    step={0.01}
-                    onValueChange={store.setNoise}
-                />
-                <ControlRow
-                    label="Alignment Bias"
-                    value={store.alignmentBias}
-                    min={CONSTRAINTS.MIN_BIAS}
-                    max={CONSTRAINTS.MAX_BIAS}
-                    step={0.1}
-                    onValueChange={store.setAlignmentBias}
-                />
-
-                <View style={styles.switchRow}>
-                    <Text style={styles.label}>Dark Mode</Text>
-                    <Switch value={store.theme === 'dark'} onValueChange={store.toggleTheme} />
-                </View>
-
-                <View style={styles.switchRow}>
-                    <Text style={styles.label}>Debug View</Text>
-                    <Switch value={store.showDebug} onValueChange={store.toggleDebug} />
-                </View>
-
-                <View style={styles.section}>
-                    <Text style={[styles.label, { marginBottom: 10 }]}>Color Mode</Text>
-                    <View style={styles.segmentContainer}>
-                        {['solid', 'velocity', 'rainbow'].map((mode) => (
-                            <TouchableOpacity
-                                key={mode}
-                                style={[
-                                    styles.segmentBtn,
-                                    store.colorMode === mode && styles.segmentBtnActive
-                                ]}
-                                onPress={() => store.setColorMode(mode as any)}
-                            >
-                                <Text style={[
-                                    styles.segmentText,
-                                    store.colorMode === mode && styles.segmentTextActive
-                                ]}>
-                                    {mode.charAt(0).toUpperCase() + mode.slice(1)}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                </View>
-
-                <TouchableOpacity style={styles.resetBtn} onPress={store.resetDefaults}>
-                    <Text style={styles.resetText}>Reset Defaults</Text>
-                </TouchableOpacity>
-
-                <View style={{ height: 40 }} />
-            </ScrollView>
+            <Slider
+                style={styles.slider}
+                minimumValue={min}
+                maximumValue={max}
+                step={step}
+                value={value}
+                onValueChange={setValue}
+                minimumTrackTintColor="#2dd4bf"
+                maximumTrackTintColor="#3f3f46"
+                thumbTintColor="#99f6e4"
+            />
         </View>
     );
 };
 
+export default function SettingsSheet({ onClose }: { onClose: () => void }) {
+    const store = useSimulationStore();
+
+    return (
+        <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                <Text style={styles.header}>Simulation Settings</Text>
+                <TouchableOpacity onPress={onClose} style={{ padding: 8, backgroundColor: '#333', borderRadius: 8 }}>
+                    <Text style={{ color: '#2dd4bf', fontWeight: 'bold' }}>Done</Text>
+                </TouchableOpacity>
+            </View>
+
+            {/* Boid Count */}
+            <SettingRow
+                label="Boid Count"
+                value={store.boidCount}
+                setValue={(v: number) => store.set({ boidCount: Math.round(v) })}
+                min={CONSTRAINTS.MIN_BOID_COUNT}
+                max={CONSTRAINTS.MAX_BOID_COUNT}
+                step={10}
+                format={(v: number) => v.toFixed(0)}
+            />
+
+            {/* Perception */}
+            <SettingRow
+                label="Perception Radius"
+                value={store.perceptionRadius}
+                setValue={(v: number) => store.set({ perceptionRadius: v })}
+                min={10} max={100}
+                format={(v: number) => v.toFixed(0)}
+            />
+
+            {/* Max Speed */}
+            <SettingRow
+                label="Max Speed"
+                value={store.maxSpeed}
+                setValue={(v: number) => store.set({ maxSpeed: v })}
+                min={CONSTRAINTS.MIN_SPEED} max={CONSTRAINTS.MAX_SPEED}
+                format={(v: number) => v.toFixed(1)}
+            />
+
+            {/* Forces */}
+            <SettingRow
+                label="Separation Force"
+                value={store.separationWeight}
+                setValue={(v: number) => store.set({ separationWeight: v })}
+                min={0} max={5}
+            />
+            <SettingRow
+                label="Alignment Force"
+                value={store.alignmentWeight}
+                setValue={(v: number) => store.set({ alignmentWeight: v })}
+                min={0} max={5}
+            />
+            <SettingRow
+                label="Cohesion Force"
+                value={store.cohesionWeight}
+                setValue={(v: number) => store.set({ cohesionWeight: v })}
+                min={0} max={5}
+            />
+            <SettingRow
+                label="Max Steer Force"
+                value={store.maxForce}
+                setValue={(v: number) => store.set({ maxForce: v })}
+                min={0} max={2} step={0.01}
+                format={(v: number) => v.toFixed(2)}
+            />
+
+            {/* Physics */}
+            <SettingRow
+                label="Drag (Friction)"
+                value={store.drag}
+                setValue={(v: number) => store.set({ drag: v })}
+                min={0} max={0.2} step={0.001}
+                format={(v: number) => v.toFixed(3)}
+            />
+
+            <SettingRow
+                label="Noise (Jitter)"
+                value={store.noise}
+                setValue={(v: number) => store.set({ noise: v })}
+                min={0} max={2}
+            />
+
+            <SettingRow
+                label="Alignment Bias"
+                value={store.alignmentBias}
+                setValue={(v: number) => store.set({ alignmentBias: v })}
+                min={0} max={4}
+            />
+
+            {/* Toggles */}
+            <View style={styles.toggleRow}>
+                <Text style={styles.label}>Bounce Off Walls</Text>
+                <Switch
+                    value={store.bounce}
+                    onValueChange={(v) => store.set({ bounce: v })}
+                    trackColor={{ false: '#3f3f46', true: '#2dd4bf' }}
+                    thumbColor={'#fff'}
+                />
+            </View>
+
+            <Text style={styles.sectionHeader}>Visuals</Text>
+            <View style={styles.toggleRow}>
+                <Text style={styles.label}>Color Mode: {store.colorMode.toUpperCase()}</Text>
+                <Switch
+                    value={store.colorMode !== 'solid'}
+                    onValueChange={(v) => {
+                        const next = store.colorMode === 'solid' ? 'velocity' : (store.colorMode === 'velocity' ? 'rainbow' : 'solid');
+                        store.set({ colorMode: next });
+                    }}
+                    trackColor={{ false: '#3f3f46', true: '#2dd4bf' }}
+                />
+            </View>
+            <View style={{ height: 40 }} />
+        </ScrollView>
+    );
+}
+
 const styles = StyleSheet.create({
     container: {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        backgroundColor: 'rgba(20, 20, 30, 0.95)',
-        borderTopLeftRadius: 20,
-        borderTopRightRadius: 20,
-        maxHeight: '60%',
-        zIndex: 100,
-    },
-    header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: '#333',
-    },
-    title: {
-        color: '#fff',
-        fontSize: 18,
-        fontWeight: 'bold',
-    },
-    closeBtn: {
-        color: '#1FB28A',
-        fontSize: 16,
-        fontWeight: '600',
+        flex: 1,
+        backgroundColor: '#09090b',
     },
     content: {
-        padding: 16,
+        padding: 20,
+        paddingBottom: 50,
     },
-    row: {
+    header: {
+        color: '#fff',
+        fontSize: 20,
+        fontWeight: 'bold',
         marginBottom: 20,
+    },
+    sectionHeader: {
+        color: '#2dd4bf',
+        fontSize: 16,
+        fontWeight: 'bold',
+        marginTop: 20,
+        marginBottom: 10,
+    },
+    settingRow: {
+        marginBottom: 16,
     },
     labelContainer: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        marginBottom: 8,
+        alignItems: 'center',
+        marginBottom: 4,
     },
     label: {
-        color: '#ccc',
+        color: '#e4e4e7',
         fontSize: 14,
     },
-    value: {
-        color: '#fff',
+    valueInput: {
+        color: '#2dd4bf',
+        backgroundColor: '#18181b',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 4,
+        minWidth: 50,
+        textAlign: 'right',
         fontSize: 14,
-        fontWeight: 'bold',
     },
-    switchRow: {
+    slider: {
+        width: '100%',
+        height: 40,
+    },
+    toggleRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 20,
-    },
-    resetBtn: {
-        alignItems: 'center',
+        marginBottom: 16,
+        backgroundColor: '#18181b',
         padding: 12,
-        marginTop: 10,
-        marginBottom: 20,
-        backgroundColor: '#333',
         borderRadius: 8,
     },
-    resetText: {
-        color: '#ff6b6b',
-        fontWeight: 'bold',
-    },
-    section: {
-        marginBottom: 20,
-    },
-    segmentContainer: {
-        flexDirection: 'row',
-        backgroundColor: '#333',
-        borderRadius: 8,
-        padding: 4,
-    },
-    segmentBtn: {
-        flex: 1,
-        paddingVertical: 8,
-        alignItems: 'center',
-        borderRadius: 6,
-    },
-    segmentBtnActive: {
-        backgroundColor: '#555',
-    },
-    segmentText: {
-        color: '#888',
-        fontSize: 12,
-        fontWeight: '600',
-    },
-    segmentTextActive: {
-        color: '#fff',
-    }
 });
