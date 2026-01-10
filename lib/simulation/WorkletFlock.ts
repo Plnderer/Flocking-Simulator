@@ -1,4 +1,5 @@
 
+import type { SharedValue } from 'react-native-reanimated';
 
 export type FlockState = {
     x: Float32Array;
@@ -8,37 +9,51 @@ export type FlockState = {
     count: number;
     width: number;
     height: number;
-    // Grid memory
     gridCells: Int32Array;
     gridNext: Int32Array;
-    // Tmp arrays for colors etc if needed?
+    cellSize: number;
+    gridW: number;
+    gridH: number;
 };
 
-// Global state on UI thread (Reanimated shareable)
-let uiFlockState: FlockState | null = null;
+// Removed global FLOCK_STORE to prevent crashes. State is now passed via SharedValue.
 
-export function getUIFlockState() {
+export function initUIFlock(
+    sv: SharedValue<FlockState | null>, // Pass SharedValue container
+    capacity: number,
+    width: number,
+    height: number,
+    initialCount: number
+) {
     'worklet';
-    return uiFlockState;
-}
-
-export function initUIFlock(capacity: number, width: number, height: number, initialCount: number) {
-    'worklet';
-    if (!uiFlockState) {
-        uiFlockState = createFlockState(capacity, width, height);
-        spawnBoids(uiFlockState, initialCount);
+    try {
+        if (!sv.value) {
+            console.log('[Worklet] Init: Start', capacity, width, height);
+            const state = createFlockState(capacity, width, height);
+            console.log('[Worklet] Init: State Created', state ? 'OK' : 'NULL');
+            spawnBoids(state, initialCount);
+            console.log('[Worklet] Init: Boids Spawned');
+            sv.value = state;
+            console.log('[Worklet] Init: Assigned to SV');
+        }
+    } catch (e) {
+        console.error('[Worklet] Init Error:', e);
     }
 }
 
-export function resetUIFlock() {
+export function resetUIFlock(sv: SharedValue<FlockState | null>) {
     'worklet';
-    uiFlockState = null; // Forces re-creation
+    console.log('[Worklet] Resetting Flock State');
+    sv.value = null;
 }
-
-
-// Pure function to initialize state
+// ...
 export function createFlockState(capacity: number, width: number, height: number): FlockState {
     'worklet';
+    const cellSize = 32; // "Movement Accuracy"
+    const gridW = Math.ceil(width / cellSize);
+    const gridH = Math.ceil(height / cellSize);
+    const gridSize = gridW * gridH;
+
     return {
         x: new Float32Array(capacity),
         y: new Float32Array(capacity),
@@ -47,13 +62,13 @@ export function createFlockState(capacity: number, width: number, height: number
         count: 0,
         width,
         height,
-        // Grid: assume max 100x100 grid = 10000 cells? 
-        // Let's make it dynamic or big enough.
-        // Actually, for worklets, standard TypedArrays are fine.
-        gridCells: new Int32Array(100 * 100).fill(-1),
-        gridNext: new Int32Array(capacity).fill(-1),
+        gridCells: new Int32Array(gridSize),
+        gridNext: new Int32Array(capacity),
+        cellSize,
+        gridW,
+        gridH
     };
-}
+};
 
 // Helper to spawn boids
 export function spawnBoids(state: FlockState, count: number) {
@@ -71,39 +86,34 @@ export function spawnBoids(state: FlockState, count: number) {
     state.count = end;
 }
 
-// Logic for grid
-function updateGrid(state: FlockState, cellSize: number) {
+
+
+
+// Grid Update Helper - Optimized
+function updateGrid(state: FlockState) {
     'worklet';
-    const cols = Math.ceil(state.width / cellSize);
-    const rows = Math.ceil(state.height / cellSize);
-    const totalCells = cols * rows;
+    const { gridCells, gridNext, x, y, count, cellSize, gridW, gridH } = state;
+    // Fast fill is better than loop if available, but TypedArray.fill is fast
+    gridCells.fill(-1);
 
-    // Resize grid cells if needed
-    if (state.gridCells.length < totalCells) {
-        state.gridCells = new Int32Array(totalCells);
+    // Using local vars for slightly faster access
+    const invCellSize = 1 / cellSize;
+
+    for (let i = 0; i < count; i++) {
+        // Fast floor using bitwise OR 0 (only works for positive integers, coords are positive)
+        const cx = (x[i] * invCellSize) | 0;
+        const cy = (y[i] * invCellSize) | 0;
+
+        // Boundary check - simplified
+        // We know standard simulation bounds, but keeping check is safe
+        if (cx >= 0 && cx < gridW && cy >= 0 && cy < gridH) {
+            const idx = cy * gridW + cx;
+            gridNext[i] = gridCells[idx];
+            gridCells[idx] = i;
+        } else {
+            gridNext[i] = -1;
+        }
     }
-
-    // Reset grid
-    // For Int32Array, fill is fast
-    state.gridCells.fill(-1, 0, totalCells);
-
-    // Add boids
-    for (let i = 0; i < state.count; i++) {
-        let cx = Math.floor(state.x[i] / cellSize);
-        let cy = Math.floor(state.y[i] / cellSize);
-
-        // Clamp to valid cell
-        if (cx < 0) cx = 0; else if (cx >= cols) cx = cols - 1;
-        if (cy < 0) cy = 0; else if (cy >= rows) cy = rows - 1;
-
-        const cellIdx = cy * cols + cx;
-
-        // Linked list insertion
-        state.gridNext[i] = state.gridCells[cellIdx];
-        state.gridCells[cellIdx] = i;
-    }
-
-    return { cols, rows };
 }
 
 export function updateFlock(
@@ -121,115 +131,134 @@ export function updateFlock(
         alignBias: number;
         bounce: boolean;
         explosion?: { x: number, y: number, radius: number, strength: number };
+        attractor?: { x: number, y: number, radius: number, strength: number };
     }
 ) {
     'worklet';
     const {
         perception, maxSpeed, maxForce,
         sepMult, aliMult, cohMult,
-        drag, noise, alignBias, bounce, explosion
+        drag, noise, alignBias, bounce, explosion, attractor
     } = params;
 
-    const cellSize = Math.max(perception, 10);
-    const { cols, rows } = updateGrid(state, cellSize);
-    const radSq = perception * perception;
     const maxSpeedSq = maxSpeed * maxSpeed;
     const maxForceSq = maxForce * maxForce;
+    const minSpeedSq = 1.0; // 1.0 * 1.0
+    const radSq = perception * perception;
+    const { gridW, gridH, gridCells, gridNext } = state;
+    const { x, y, vx, vy, count, cellSize } = state;
+    const invCellSize = 1 / cellSize;
+
+    // Update Spatial Grid
+    updateGrid(state);
 
     // Bias optimization
     const effBias = Math.max(0.01, alignBias);
     const useBias = Math.abs(effBias - 1.0) > 0.01;
+    const width = state.width;
+    const height = state.height;
 
-    for (let i = 0; i < state.count; i++) {
+    // Cache math functions
+    const sqrt = Math.sqrt;
+    const random = Math.random;
+
+    for (let i = 0; i < count; i++) {
         let sepX = 0, sepY = 0;
         let aliX = 0, aliY = 0;
         let cohX = 0, cohY = 0;
-        let count = 0;
+        let nNeighbors = 0;
 
-        const px = state.x[i];
-        const py = state.y[i];
-        const pvx = state.vx[i];
-        const pvy = state.vy[i];
+        const px = x[i];
+        const py = y[i];
+        const pvx = vx[i];
+        const pvy = vy[i];
 
-        const cx = Math.floor(px / cellSize);
-        const cy = Math.floor(py / cellSize);
+        const cx = (px * invCellSize) | 0;
+        const cy = (py * invCellSize) | 0;
 
         // Pre-calc mag for bias
         let myMag = 0;
         if (useBias) {
-            myMag = Math.sqrt(pvx * pvx + pvy * pvy) || 0.001;
+            myMag = sqrt(pvx * pvx + pvy * pvy) || 0.001;
         }
 
-        // Neighbors
-        for (let dy = -1; dy <= 1; dy++) {
-            const ny = cy + dy;
-            if (ny < 0 || ny >= rows) continue;
-            for (let dx = -1; dx <= 1; dx++) {
-                const nx = cx + dx;
-                if (nx < 0 || nx >= cols) continue;
+        // Neighbors - Spatial Grid Search
+        // Unroll loops? Maybe overkill, but let's keep it tight.
+        const startY = (cy - 1) < 0 ? 0 : cy - 1;
+        const endY = (cy + 1) >= gridH ? gridH - 1 : cy + 1;
+        const startX = (cx - 1) < 0 ? 0 : cx - 1;
+        const endX = (cx + 1) >= gridW ? gridW - 1 : cx + 1;
 
-                const cellIdx = ny * cols + nx;
-                let otherIdx = state.gridCells[cellIdx];
+        for (let ny = startY; ny <= endY; ny++) {
+            const rowOffset = ny * gridW;
+            for (let nx = startX; nx <= endX; nx++) {
+                let j = gridCells[rowOffset + nx];
+                while (j !== -1) {
+                    if (i !== j) {
+                        // FPS Optimization: Limit neighbors
+                        if (nNeighbors >= 25) break;
 
-                while (otherIdx !== -1) {
-                    if (otherIdx !== i) {
-                        const ox = state.x[otherIdx];
-                        const oy = state.y[otherIdx];
+                        const ox = x[j];
+                        const oy = y[j];
                         const diffX = px - ox;
                         const diffY = py - oy;
-                        const distSq = diffX * diffX + diffY * diffY;
 
-                        if (distSq > 0 && distSq < radSq) {
-                            count++;
-                            const invDistSq = 1.0 / distSq;
+                        // Fast bounding box check before square dist
+                        if (diffX > -perception && diffX < perception &&
+                            diffY > -perception && diffY < perception) {
 
-                            // Sep
-                            sepX += diffX * invDistSq;
-                            sepY += diffY * invDistSq;
+                            const distSq = diffX * diffX + diffY * diffY;
 
-                            // Cohesion - Accumulate position
-                            cohX += ox;
-                            cohY += oy;
+                            if (distSq < radSq && distSq > 0) {
+                                nNeighbors++;
+                                const invDistSq = 1.0 / distSq;
 
-                            // Align
-                            const ovx = state.vx[otherIdx];
-                            const ovy = state.vy[otherIdx];
+                                sepX += diffX * invDistSq;
+                                sepY += diffY * invDistSq;
+                                cohX += ox;
+                                cohY += oy;
 
-                            let weight = 1.0;
-                            if (useBias) {
-                                // Dot product alignment
-                                const oMag = Math.sqrt(ovx * ovx + ovy * ovy) || 0.001;
-                                const dot = (pvx * ovx + pvy * ovy) / (myMag * oMag);
-                                weight = Math.pow(effBias, dot); // Safe pow needed? Typescript `Math.pow` is fine, logic handled.
-                                // Note: dot is -1..1. effBias^dot handle carefully. 
-                                // Handled in previous step logic, repeating here.
+                                const ovx = vx[j];
+                                const ovy = vy[j];
+
+                                if (useBias) {
+                                    const oMag = sqrt(ovx * ovx + ovy * ovy) || 0.001;
+                                    const dot = (pvx * ovx + pvy * ovy) / (myMag * oMag);
+                                    // Math.pow is expensive, maybe simple bias?
+                                    // Keep for now as quality
+                                    var weight = Math.pow(effBias, dot);
+                                    aliX += ovx * weight;
+                                    aliY += ovy * weight;
+                                } else {
+                                    aliX += ovx;
+                                    aliY += ovy;
+                                }
                             }
-                            aliX += ovx * weight;
-                            aliY += ovy * weight;
                         }
                     }
-                    otherIdx = state.gridNext[otherIdx];
+                    j = gridNext[j];
                 }
+                if (nNeighbors >= 25) break; // Break out of grid loop too
             }
         }
 
         let fx = 0;
         let fy = 0;
 
-        if (count > 0) {
-            const invCount = 1.0 / count;
+        if (nNeighbors > 0) {
+            const invCount = 1.0 / nNeighbors;
 
             // Separation
             const sepLenSq = sepX * sepX + sepY * sepY;
             if (sepLenSq > 0) {
-                const invLen = 1.0 / Math.sqrt(sepLenSq);
-                sepX = (sepX * invLen * maxSpeed) - pvx;
-                sepY = (sepY * invLen * maxSpeed) - pvy;
+                // Inline normalize & limit
+                const invLen = maxSpeed / sqrt(sepLenSq);
+                sepX = (sepX * invLen) - pvx;
+                sepY = (sepY * invLen) - pvy;
 
-                // Limit
                 const fSq = sepX * sepX + sepY * sepY;
                 if (fSq > maxForceSq) {
-                    const s = maxForce / Math.sqrt(fSq);
+                    const s = maxForce / sqrt(fSq);
                     sepX *= s; sepY *= s;
                 }
                 fx += sepX * sepMult;
@@ -239,18 +268,17 @@ export function updateFlock(
             // Cohesion
             cohX *= invCount;
             cohY *= invCount;
-            // Steer towards
             let cDx = cohX - px;
             let cDy = cohY - py;
             const cDistSq = cDx * cDx + cDy * cDy;
             if (cDistSq > 0) {
-                const invLen = 1.0 / Math.sqrt(cDistSq);
-                cDx = (cDx * invLen * maxSpeed) - pvx;
-                cDy = (cDy * invLen * maxSpeed) - pvy;
+                const invLen = maxSpeed / sqrt(cDistSq);
+                cDx = (cDx * invLen) - pvx;
+                cDy = (cDy * invLen) - pvy;
 
                 const fSq = cDx * cDx + cDy * cDy;
                 if (fSq > maxForceSq) {
-                    const s = maxForce / Math.sqrt(fSq);
+                    const s = maxForce / sqrt(fSq);
                     cDx *= s; cDy *= s;
                 }
                 fx += cDx * cohMult;
@@ -262,13 +290,13 @@ export function updateFlock(
             aliY *= invCount;
             const aLenSq = aliX * aliX + aliY * aliY;
             if (aLenSq > 0) {
-                const invLen = 1.0 / Math.sqrt(aLenSq);
-                aliX = (aliX * invLen * maxSpeed) - pvx;
-                aliY = (aliY * invLen * maxSpeed) - pvy;
+                const invLen = maxSpeed / sqrt(aLenSq);
+                aliX = (aliX * invLen) - pvx;
+                aliY = (aliY * invLen) - pvy;
 
                 const fSq = aliX * aliX + aliY * aliY;
                 if (fSq > maxForceSq) {
-                    const s = maxForce / Math.sqrt(fSq);
+                    const s = maxForce / sqrt(fSq);
                     aliX *= s; aliY *= s;
                 }
                 fx += aliX * aliMult;
@@ -276,19 +304,20 @@ export function updateFlock(
             }
         }
 
-        // Apply
         let nvx = pvx + fx;
         let nvy = pvy + fy;
 
-        // Drag
         if (drag > 0) {
-            nvx *= (1 - drag);
-            nvy *= (1 - drag);
+            // Pre-calculate 1-drag outside? No, drag is dynamic prop
+            const dragFactor = 1 - drag;
+            nvx *= dragFactor;
+            nvy *= dragFactor;
         }
 
-        // Noise
         if (noise > 0) {
-            const angle = (Math.random() - 0.5) * noise * 2;
+            // Approximation of rotation for speed? 
+            // Keep full cos/sin for quality
+            const angle = (random() - 0.5) * noise * 2;
             const c = Math.cos(angle);
             const s = Math.sin(angle);
             const _nvx = nvx * c - nvy * s;
@@ -297,59 +326,63 @@ export function updateFlock(
             nvy = _nvy;
         }
 
-        // Explosion interaction
         if (explosion) {
             const ex = explosion.x - px;
             const ey = explosion.y - py;
             const distSq = ex * ex + ey * ey;
-            // Blast radius
-            if (distSq < explosion.radius * explosion.radius) {
-                const dist = Math.sqrt(distSq) || 0.001;
-                // Force falls off with distance
+            const rSq = explosion.radius * explosion.radius;
+            if (distSq < rSq) {
+                const dist = sqrt(distSq) || 0.001;
                 const force = (1.0 - dist / explosion.radius) * explosion.strength;
-                // Push away
-                const dirX = -ex / dist;
-                const dirY = -ey / dist;
-                nvx += dirX * force;
-                nvy += dirY * force;
+                // dir is -ex/dist
+                nvx += (-ex / dist) * force;
+                nvy += (-ey / dist) * force;
             }
         }
 
-        // Speed Limit
+        if (attractor) {
+            const ax = attractor.x - px;
+            const ay = attractor.y - py;
+            const distSq = ax * ax + ay * ay;
+            const dist = sqrt(distSq) || 0.001;
+            // Normalize direction
+            const dirX = ax / dist;
+            const dirY = ay / dist;
+            nvx += dirX * attractor.strength;
+            nvy += dirY * attractor.strength;
+        }
+
         const speedSq = nvx * nvx + nvy * nvy;
         if (speedSq > maxSpeedSq) {
-            const s = maxSpeed / Math.sqrt(speedSq);
+            const s = maxSpeed / sqrt(speedSq);
             nvx *= s;
             nvy *= s;
-        } else {
-            const minSpeed = maxSpeed * 0.1; // Default min speed
-            if (speedSq < minSpeed * minSpeed && speedSq > 0.000001) {
-                const s = minSpeed / Math.sqrt(speedSq);
-                nvx *= s;
-                nvy *= s;
-            }
+        } else if (speedSq < minSpeedSq && speedSq > 0.000001) {
+            // Keep min speed to prevent stopping completely
+            const s = 1.0 / sqrt(speedSq); // minSpeed is 1
+            nvx *= s;
+            nvy *= s;
         }
 
-        // Integrate
         let nx = px + nvx * dt;
         let ny = py + nvy * dt;
 
-        // Bounce or Wrap
         if (bounce) {
             if (nx < 0) { nx = 0; nvx *= -1; }
-            if (nx > state.width) { nx = state.width; nvx *= -1; }
+            else if (nx > width) { nx = width; nvx *= -1; }
             if (ny < 0) { ny = 0; nvy *= -1; }
-            if (ny > state.height) { ny = state.height; nvy *= -1; }
+            else if (ny > height) { ny = height; nvy *= -1; }
         } else {
-            if (nx < 0) nx = state.width;
-            if (nx > state.width) nx = 0;
-            if (ny < 0) ny = state.height;
-            if (ny > state.height) ny = 0;
+            if (nx < 0) nx = width;
+            else if (nx > width) nx = 0;
+            if (ny < 0) ny = height;
+            else if (ny > height) ny = 0;
         }
 
-        state.x[i] = nx;
-        state.y[i] = ny;
-        state.vx[i] = nvx;
-        state.vy[i] = nvy;
+        x[i] = nx;
+        y[i] = ny;
+        vx[i] = nvx;
+        vy[i] = nvy;
     }
 }
+

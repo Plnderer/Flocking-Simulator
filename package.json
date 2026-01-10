@@ -13,6 +13,7 @@
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/cli": "latest",
     "@react-native-community/slider": "5.0.1",
     "@react-navigation/bottom-tabs": "^7.4.0",
     "@react-navigation/elements": "^2.6.3",
@@ -44,6 +45,7 @@
     "zustand": "^5.0.9"
   },
   "devDependencies": {
+    "@react-native/metro-config": "^0.83.1",
     "@types/react": "~19.1.0",
     "babel-plugin-transform-import-meta": "^2.3.3",
     "eslint": "^9.25.0",

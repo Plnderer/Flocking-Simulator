@@ -11,8 +11,10 @@ interface SimulationState {
     separationWeight: number;
     alignmentWeight: number;
     cohesionWeight: number;
+    fieldOfView: number; // Degrees
     trailLength: number;
     isPlaying: boolean;
+    stepTrigger: number;
 
     // Visuals
     showDebug: boolean;
@@ -24,6 +26,7 @@ interface SimulationState {
     noise: number;
     alignmentBias: number;
     bounce: boolean;
+    particleMode: 'triangle' | 'circle';
 
     // Actions
     setBoidCount: (count: number) => void;
@@ -33,7 +36,9 @@ interface SimulationState {
     setSeparationWeight: (w: number) => void;
     setAlignmentWeight: (w: number) => void;
     setCohesionWeight: (w: number) => void;
+    setFieldOfView: (deg: number) => void;
     togglePlay: () => void;
+    nextFrame: () => void;
     toggleDebug: () => void;
     toggleVision: () => void;
     toggleDirection: () => void;
@@ -57,8 +62,10 @@ export const useSimulationStore = create<SimulationState>()(
             separationWeight: DEFAULTS.SEPARATION_WEIGHT,
             alignmentWeight: DEFAULTS.ALIGNMENT_WEIGHT,
             cohesionWeight: DEFAULTS.COHESION_WEIGHT,
+            fieldOfView: DEFAULTS.FIELD_OF_VIEW,
             trailLength: DEFAULTS.TRAIL_LENGTH,
             isPlaying: true,
+            stepTrigger: 0,
             showDebug: false,
             showVision: false,
             showDirection: false,
@@ -68,6 +75,7 @@ export const useSimulationStore = create<SimulationState>()(
             noise: DEFAULTS.NOISE,
             alignmentBias: DEFAULTS.ALIGNMENT_BIAS,
             bounce: false,
+            particleMode: 'triangle',
 
             setBoidCount: (count) => set({ boidCount: Math.min(Math.max(count, CONSTRAINTS.MIN_BOID_COUNT), CONSTRAINTS.MAX_BOID_COUNT) }),
             setPerceptionRadius: (n) => set({ perceptionRadius: Math.min(Math.max(n, CONSTRAINTS.MIN_PERCEPTION), CONSTRAINTS.MAX_PERCEPTION) }),
@@ -76,7 +84,9 @@ export const useSimulationStore = create<SimulationState>()(
             setSeparationWeight: (w) => set({ separationWeight: w }),
             setAlignmentWeight: (w) => set({ alignmentWeight: w }),
             setCohesionWeight: (w) => set({ cohesionWeight: w }),
+            setFieldOfView: (deg) => set({ fieldOfView: Math.min(Math.max(deg, CONSTRAINTS.MIN_FOV), CONSTRAINTS.MAX_FOV) }),
             togglePlay: () => set((state) => ({ isPlaying: !state.isPlaying })),
+            nextFrame: () => set((state) => ({ stepTrigger: state.stepTrigger + 1 })),
             toggleDebug: () => set((state) => ({ showDebug: !state.showDebug })),
             toggleVision: () => set((state) => ({ showVision: !state.showVision })),
             toggleDirection: () => set((state) => ({ showDirection: !state.showDirection })),
@@ -93,10 +103,12 @@ export const useSimulationStore = create<SimulationState>()(
                 separationWeight: DEFAULTS.SEPARATION_WEIGHT,
                 alignmentWeight: DEFAULTS.ALIGNMENT_WEIGHT,
                 cohesionWeight: DEFAULTS.COHESION_WEIGHT,
+                fieldOfView: DEFAULTS.FIELD_OF_VIEW,
                 drag: DEFAULTS.DRAG,
                 noise: DEFAULTS.NOISE,
                 alignmentBias: DEFAULTS.ALIGNMENT_BIAS,
                 bounce: false,
+                particleMode: 'triangle',
                 showVision: false,
                 showDirection: false,
             }),
