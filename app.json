@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "boids-app",
+    "name": "Flocking Simulator",
     "slug": "boids-app",
     "version": "1.0.0",
     "orientation": "portrait",
